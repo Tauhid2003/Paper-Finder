@@ -1,0 +1,11 @@
+# Sci-Hub Bulk Download List
+# This file contains DOIs to download
+# Lines starting with # are ignored
+# One DOI per line
+
+10.1029/2010RS004406
+10.1038/nature12373
+10.1109/5.771073
+10.1145/3025453.3025815
+10.1016/j.cageo.2015.09.007
+https://doi.org/10.1051/0004-6361/201833051
