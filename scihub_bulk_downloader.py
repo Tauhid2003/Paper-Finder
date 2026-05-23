@@ -13,7 +13,7 @@ import re
 import threading
 import csv
 import json
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 from pathlib import Path
 from datetime import datetime
 import queue
@@ -35,6 +35,90 @@ HEADERS = {
 }
 
 SCIHUB_URL = "https://www.sci-hub.red/"
+
+def extract_dois_from_text(text: str) -> List[str]:
+    # Match standard DOIs, e.g., 10.1016/j.cageo.2015.09.007
+    raw_dois = re.findall(r'\b(10\.\d{4,9}/[-._;()/:a-zA-Z0-9]+)', text)
+    cleaned_dois = []
+    for doi in raw_dois:
+        while doi and doi[-1] in '.,;):]}>?!\'"':
+            doi = doi[:-1]
+        while doi and doi[0] in '([<{':
+            doi = doi[1:]
+        if '/' in doi and doi.startswith('10.'):
+            if doi not in cleaned_dois:
+                cleaned_dois.append(doi)
+    return cleaned_dois
+
+def extract_urls_from_text(text: str) -> List[str]:
+    # Match common URLs that are direct PDF links or doi.org links
+    url_pattern = re.compile(r'(https?://[^\s<>"]+)')
+    raw_urls = url_pattern.findall(text)
+    cleaned_urls = []
+    for url in raw_urls:
+        while url and url[-1] in '.,;):]}>?!\'"':
+            url = url[:-1]
+        if 'doi.org/' in url or '.pdf' in url.lower():
+            if url not in cleaned_urls:
+                cleaned_urls.append(url)
+    return cleaned_urls
+
+def filter_dois_and_links_from_file(file_path: str) -> tuple[List[str], List[str]]:
+    dois = []
+    urls = []
+    text = ""
+    
+    if file_path.endswith('.docx'):
+        import zipfile
+        import xml.etree.ElementTree as ET
+        try:
+            with zipfile.ZipFile(file_path) as docx:
+                xml_content = docx.read('word/document.xml')
+                root = ET.fromstring(xml_content)
+                namespaces = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+                text_elements = root.findall('.//w:t', namespaces)
+                text = ' '.join([el.text for el in text_elements if el.text])
+        except Exception as e:
+            print(f"Error reading Word document: {e}")
+    elif file_path.endswith('.pdf'):
+        try:
+            import pypdf
+            reader = pypdf.PdfReader(file_path)
+            text_list = []
+            for page in reader.pages:
+                text_list.append(page.extract_text() or "")
+            text = " ".join(text_list)
+        except ImportError:
+            print("PDF filtering requires 'pypdf' library. Try: pip install pypdf")
+        except Exception as e:
+            print(f"Error reading PDF document: {e}")
+    else:
+        for encoding in ['utf-8', 'latin-1', 'cp1252']:
+            try:
+                with open(file_path, 'r', encoding=encoding) as f:
+                    text = f.read()
+                break
+            except Exception:
+                continue
+                
+    if text:
+        dois = extract_dois_from_text(text)
+        urls = extract_urls_from_text(text)
+        
+        cleaned_urls = []
+        for u in urls:
+            doi_match = re.search(r'doi\.org/(10\.\d{4,9}/[-._;()/:a-zA-Z0-9]+)', u, re.IGNORECASE)
+            if doi_match:
+                extracted_doi = doi_match.group(1)
+                while extracted_doi and extracted_doi[-1] in '.,;):]}>?!\'"':
+                    extracted_doi = extracted_doi[:-1]
+                if extracted_doi not in dois:
+                    dois.append(extracted_doi)
+            else:
+                cleaned_urls.append(u)
+        urls = cleaned_urls
+        
+    return dois, urls
 
 
 @dataclass
@@ -161,6 +245,9 @@ class SciHubBulkDownloader:
         self.btn_paste = ttk.Button(button_frame, text="📝 Paste DOIs", command=self.paste_dois)
         self.btn_paste.pack(fill=tk.X, pady=(0, 5))
         
+        self.btn_filter = ttk.Button(button_frame, text="🔍 Filter from Doc", command=self.filter_document)
+        self.btn_filter.pack(fill=tk.X, pady=(0, 5))
+        
         self.btn_example = ttk.Button(button_frame, text="📌 Load Example", command=self.load_example)
         self.btn_example.pack(fill=tk.X)
         
@@ -181,6 +268,19 @@ class SciHubBulkDownloader:
         
         browse_btn = ttk.Button(save_frame, text="...", width=3, command=self.browse_folder)
         browse_btn.pack(side=tk.LEFT, padx=(5, 0))
+        
+        # Provider selection
+        provider_label = ttk.Label(panel, text="Download Source:")
+        provider_label.pack(anchor=tk.W, pady=(0, 3))
+        
+        self.provider_var = tk.StringVar(value="Auto")
+        provider_combo = ttk.Combobox(panel, textvariable=self.provider_var, width=35, state='readonly')
+        provider_combo['values'] = (
+            "Auto (OA API + Sci-Hub)",
+            "Sci-Hub Only",
+            "Open Access APIs Only (Legal)",
+        )
+        provider_combo.pack(fill=tk.X, pady=(0, 10))
         
         # Sci-Hub mirror
         mirror_label = ttk.Label(panel, text="Sci-Hub Mirror:")
@@ -293,6 +393,18 @@ class SciHubBulkDownloader:
         
         return footer
     
+    def check_and_enforce_limit(self) -> bool:
+        """Check if papers list exceeds 50 and truncate if necessary. Returns True if truncated."""
+        if len(self.papers) > 50:
+            self.papers = self.papers[:50]
+            self.update_tree()
+            messagebox.showwarning(
+                "Warning",
+                "Download list is limited to a maximum of 50 papers at a time.\nThe list has been truncated to the first 50 papers."
+            )
+            return True
+        return False
+
     def load_file(self):
         """Load DOIs from file"""
         filetypes = [("All Supported", "*.txt *.csv *.xlsx"), ("Text", "*.txt"), ("CSV", "*.csv")]
@@ -307,10 +419,11 @@ class SciHubBulkDownloader:
             papers = self.parse_file(file_path)
             self.papers.extend(papers)
             self.update_tree()
+            self.check_and_enforce_limit()
             messagebox.showinfo("Success", f"Loaded {len(papers)} DOIs")
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load file: {str(e)}")
-    
+
     def parse_file(self, file_path: str) -> List[Paper]:
         """Parse DOIs from various file formats"""
         papers = []
@@ -351,14 +464,62 @@ class SciHubBulkDownloader:
                             papers.append(Paper(doi=doi))
         
         return papers
-    
+
+    def filter_document(self):
+        """Open a file and extract DOIs and links from it"""
+        filetypes = [
+            ("All Supported Documents", "*.txt *.csv *.docx *.pdf"),
+            ("Text Document", "*.txt"),
+            ("Word Document", "*.docx"),
+            ("PDF Document", "*.pdf"),
+            ("CSV File", "*.csv")
+        ]
+        file_path = filedialog.askopenfilename(filetypes=filetypes)
+        if not file_path:
+            return
+            
+        self.update_status(f"Filtering {os.path.basename(file_path)}...")
+        self.progress.start()
+        
+        def run_filter():
+            try:
+                dois, urls = filter_dois_and_links_from_file(file_path)
+                targets = dois + urls
+                new_papers = [Paper(doi=t) for t in targets]
+                
+                def update_gui():
+                    self.progress.stop()
+                    if not new_papers:
+                        messagebox.showinfo("No Papers Found", "No DOIs or links found in the document.")
+                        self.update_status("Ready")
+                        return
+                    
+                    self.papers.extend(new_papers)
+                    self.update_tree()
+                    self.check_and_enforce_limit()
+                    messagebox.showinfo("Success", f"Extracted {len(new_papers)} papers/links from document.")
+                    self.update_status("Ready")
+                    
+                self.root.after(0, update_gui)
+                
+            except Exception as e:
+                def on_error():
+                    self.progress.stop()
+                    messagebox.showerror("Error", f"Failed to filter document: {str(e)}")
+                    self.update_status("Ready")
+                self.root.after(0, on_error)
+                
+        thread = threading.Thread(target=run_filter)
+        thread.daemon = True
+        thread.start()
+
     def paste_dois(self):
-        """Open dialog to paste DOIs"""
+        """Open dialog to paste text containing DOIs or URLs"""
         dialog = tk.Toplevel(self.root)
-        dialog.title("Paste DOIs")
+        dialog.title("Paste DOIs or Text")
         dialog.geometry("500x400")
         
-        label = ttk.Label(dialog, text="Paste DOIs (one per line):")
+        label = ttk.Label(dialog, text="Paste DOIs/Links or any text containing citations:")
         label.pack(pady=10)
         
         text = scrolledtext.ScrolledText(dialog, height=15, width=60)
@@ -366,18 +527,28 @@ class SciHubBulkDownloader:
         
         def process():
             content = text.get("1.0", tk.END)
-            papers = []
+            dois = extract_dois_from_text(content)
+            urls = extract_urls_from_text(content)
             
-            for line in content.split('\n'):
-                line = line.strip()
-                if line and not line.startswith('#'):
-                    doi = self.validate_doi(line)
-                    if doi:
-                        papers.append(Paper(doi=doi))
+            cleaned_urls = []
+            for u in urls:
+                doi_match = re.search(r'doi\.org/(10\.\d{4,9}/[-._;()/:a-zA-Z0-9]+)', u, re.IGNORECASE)
+                if doi_match:
+                    extracted_doi = doi_match.group(1)
+                    while extracted_doi and extracted_doi[-1] in '.,;):]}>?!\'"':
+                        extracted_doi = extracted_doi[:-1]
+                    if extracted_doi not in dois:
+                        dois.append(extracted_doi)
+                else:
+                    cleaned_urls.append(u)
+            
+            targets = dois + cleaned_urls
+            papers = [Paper(doi=t) for t in targets]
             
             self.papers.extend(papers)
             self.update_tree()
-            messagebox.showinfo("Success", f"Added {len(papers)} DOIs")
+            self.check_and_enforce_limit()
+            messagebox.showinfo("Success", f"Added {len(papers)} DOIs/links")
             dialog.destroy()
         
         btn_frame = ttk.Frame(dialog)
@@ -385,7 +556,7 @@ class SciHubBulkDownloader:
         
         ttk.Button(btn_frame, text="Add", command=process).pack(side=tk.LEFT)
         ttk.Button(btn_frame, text="Cancel", command=dialog.destroy).pack(side=tk.LEFT, padx=(5, 0))
-    
+
     def load_example(self):
         """Load example DOIs"""
         example_papers = [
@@ -396,6 +567,7 @@ class SciHubBulkDownloader:
         
         self.papers.extend(example_papers)
         self.update_tree()
+        self.check_and_enforce_limit()
         messagebox.showinfo("Example Loaded", f"Loaded {len(example_papers)} example DOIs")
     
     def validate_doi(self, doi: str) -> Optional[str]:
@@ -456,10 +628,49 @@ class SciHubBulkDownloader:
         thread.daemon = True
         thread.start()
     
+    def resolve_via_open_access(self, doi: str) -> Optional[str]:
+        """Try to resolve DOI to direct PDF URL using Unpaywall and OpenAlex APIs"""
+        # Try Unpaywall first
+        try:
+            clean_doi = doi.strip()
+            unpaywall_url = f"https://api.unpaywall.org/v2/{clean_doi}?email=paper_finder_downloader_tool_1234@gmail.com"
+            r = requests.get(unpaywall_url, headers=HEADERS, timeout=10)
+            if r.status_code == 200:
+                data = r.json()
+                if data.get('is_oa'):
+                    best_loc = data.get('best_oa_location') or {}
+                    pdf_url = best_loc.get('url_for_pdf')
+                    if pdf_url:
+                        return pdf_url
+        except Exception:
+            pass
+            
+        # Try OpenAlex
+        try:
+            clean_doi = doi.strip()
+            openalex_url = f"https://api.openalex.org/works/doi:{clean_doi}"
+            r = requests.get(openalex_url, headers=HEADERS, timeout=10)
+            if r.status_code == 200:
+                data = r.json()
+                oa_data = data.get('open_access') or {}
+                if oa_data.get('is_oa'):
+                    pdf_url = oa_data.get('oa_url')
+                    if pdf_url and pdf_url.endswith('.pdf'):
+                        return pdf_url
+                    prim_loc = data.get('primary_location') or {}
+                    pdf_url = prim_loc.get('pdf_url')
+                    if pdf_url:
+                        return pdf_url
+        except Exception:
+            pass
+            
+        return None
+
     def download_papers(self):
         """Download all papers"""
         session = requests.Session()
         mirror = self.mirror_var.get()
+        provider = self.provider_var.get()
         
         Path(self.download_dir).mkdir(parents=True, exist_ok=True)
         
@@ -467,27 +678,44 @@ class SciHubBulkDownloader:
             if not self.is_downloading:
                 break
             
+            if paper.status == "Success":
+                continue
+                
+            filepath = None
             try:
                 paper.status = "Downloading..."
-                self.queue.put(('status', paper.status))
+                self.queue.put(('status', f"Downloading {paper.doi}..."))
+                self.queue.put(('update', i))
                 
-                # Extract PDF URL
-                search_url = urljoin(mirror, paper.doi)
-                response = session.get(search_url, headers=HEADERS, timeout=15)
+                is_url = paper.doi.startswith('http://') or paper.doi.startswith('https://')
                 
-                if response.status_code != 200:
-                    raise Exception("Paper not found")
-                
-                # Find PDF URL
-                pdf_url = self.extract_pdf_url(response.text, mirror)
+                pdf_url = None
+                if is_url:
+                    pdf_url = paper.doi
+                else:
+                    if "Auto" in provider or "Open Access" in provider:
+                        pdf_url = self.resolve_via_open_access(paper.doi)
+                    
+                    if not pdf_url and ("Auto" in provider or "Sci-Hub" in provider):
+                        search_url = urljoin(mirror, paper.doi)
+                        response = session.get(search_url, headers=HEADERS, timeout=15)
+                        if response.status_code != 200:
+                            raise Exception("Paper not found")
+                        pdf_url = self.extract_pdf_url(response.text, mirror)
                 
                 if not pdf_url:
                     raise Exception("PDF link not found")
                 
-                # Download PDF
                 pdf_response = session.get(pdf_url, headers=HEADERS, timeout=30, stream=True)
                 
-                filename = re.sub(r'[^\w\-_\.]', '_', paper.doi) + '.pdf'
+                if is_url:
+                    base_name = urlparse(pdf_url).path.split('/')[-1]
+                    if not base_name.endswith('.pdf'):
+                        base_name = re.sub(r'[^\w\-_\.]', '_', base_name) + '.pdf'
+                    filename = base_name
+                else:
+                    filename = re.sub(r'[^\w\-_\.]', '_', paper.doi) + '.pdf'
+                    
                 filepath = os.path.join(self.download_dir, filename)
                 
                 with open(filepath, 'wb') as f:
@@ -496,6 +724,9 @@ class SciHubBulkDownloader:
                             f.write(chunk)
                 
                 # Validate PDF
+                if os.path.getsize(filepath) < 1000:
+                    raise Exception("File too small (< 1KB)")
+                    
                 with open(filepath, 'rb') as f:
                     if f.read(4) != b'%PDF':
                         raise Exception("Invalid PDF file")
@@ -507,6 +738,11 @@ class SciHubBulkDownloader:
             except Exception as e:
                 paper.status = "Failed"
                 paper.error = str(e)
+                if filepath and os.path.exists(filepath):
+                    try:
+                        os.remove(filepath)
+                    except:
+                        pass
                 self.queue.put(('error', f"Failed {paper.doi}: {str(e)}"))
             
             self.queue.put(('update', i))

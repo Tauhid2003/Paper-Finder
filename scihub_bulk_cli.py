@@ -11,11 +11,103 @@ import sys
 import argparse
 import csv
 import json
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 from pathlib import Path
 from datetime import datetime
 from typing import List, Optional
 import time
+
+# Reconfigure stdout/stderr to UTF-8 on Windows to prevent Unicode charmap encode errors
+if sys.platform.startswith('win'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except AttributeError:
+        pass
+
+def extract_dois_from_text(text: str) -> List[str]:
+    # Match standard DOIs, e.g., 10.1016/j.cageo.2015.09.007
+    raw_dois = re.findall(r'\b(10\.\d{4,9}/[-._;()/:a-zA-Z0-9]+)', text)
+    cleaned_dois = []
+    for doi in raw_dois:
+        while doi and doi[-1] in '.,;):]}>?!\'"':
+            doi = doi[:-1]
+        while doi and doi[0] in '([<{':
+            doi = doi[1:]
+        if '/' in doi and doi.startswith('10.'):
+            if doi not in cleaned_dois:
+                cleaned_dois.append(doi)
+    return cleaned_dois
+
+def extract_urls_from_text(text: str) -> List[str]:
+    # Match common URLs that are direct PDF links or doi.org links
+    url_pattern = re.compile(r'(https?://[^\s<>"]+)')
+    raw_urls = url_pattern.findall(text)
+    cleaned_urls = []
+    for url in raw_urls:
+        while url and url[-1] in '.,;):]}>?!\'"':
+            url = url[:-1]
+        if 'doi.org/' in url or '.pdf' in url.lower():
+            if url not in cleaned_urls:
+                cleaned_urls.append(url)
+    return cleaned_urls
+
+def filter_dois_and_links_from_file(file_path: str) -> tuple[List[str], List[str]]:
+    dois = []
+    urls = []
+    text = ""
+    
+    if file_path.endswith('.docx'):
+        import zipfile
+        import xml.etree.ElementTree as ET
+        try:
+            with zipfile.ZipFile(file_path) as docx:
+                xml_content = docx.read('word/document.xml')
+                root = ET.fromstring(xml_content)
+                namespaces = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+                text_elements = root.findall('.//w:t', namespaces)
+                text = ' '.join([el.text for el in text_elements if el.text])
+        except Exception as e:
+            print(f"Error reading Word document: {e}")
+    elif file_path.endswith('.pdf'):
+        try:
+            import pypdf
+            reader = pypdf.PdfReader(file_path)
+            text_list = []
+            for page in reader.pages:
+                text_list.append(page.extract_text() or "")
+            text = " ".join(text_list)
+        except ImportError:
+            print("PDF filtering requires 'pypdf' library. Try: pip install pypdf")
+        except Exception as e:
+            print(f"Error reading PDF document: {e}")
+    else:
+        for encoding in ['utf-8', 'latin-1', 'cp1252']:
+            try:
+                with open(file_path, 'r', encoding=encoding) as f:
+                    text = f.read()
+                break
+            except Exception:
+                continue
+                
+    if text:
+        dois = extract_dois_from_text(text)
+        urls = extract_urls_from_text(text)
+        
+        cleaned_urls = []
+        for u in urls:
+            doi_match = re.search(r'doi\.org/(10\.\d{4,9}/[-._;()/:a-zA-Z0-9]+)', u, re.IGNORECASE)
+            if doi_match:
+                extracted_doi = doi_match.group(1)
+                while extracted_doi and extracted_doi[-1] in '.,;):]}>?!\'"':
+                    extracted_doi = extracted_doi[:-1]
+                if extracted_doi not in dois:
+                    dois.append(extracted_doi)
+            else:
+                cleaned_urls.append(u)
+        urls = cleaned_urls
+        
+    return dois, urls
 
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -39,11 +131,12 @@ class ColorText:
 
 
 class BulkDownloader:
-    def __init__(self, output_dir: str, mirror: str = SCIHUB_URL, delay: float = 0, max_retries: int = 3):
+    def __init__(self, output_dir: str, mirror: str = SCIHUB_URL, delay: float = 0, max_retries: int = 3, provider: str = 'auto'):
         self.output_dir = output_dir
         self.mirror = mirror
         self.delay = delay
         self.max_retries = max_retries
+        self.provider = provider
         self.session = requests.Session()
         
         Path(self.output_dir).mkdir(parents=True, exist_ok=True)
@@ -115,34 +208,81 @@ class BulkDownloader:
         
         return None
     
+    def resolve_via_open_access(self, doi: str) -> Optional[str]:
+        """Try to resolve DOI to direct PDF URL using Unpaywall and OpenAlex APIs"""
+        # Try Unpaywall first
+        try:
+            clean_doi = doi.strip()
+            # Use a polite email to avoid blocking
+            unpaywall_url = f"https://api.unpaywall.org/v2/{clean_doi}?email=paper_finder_downloader_tool_1234@gmail.com"
+            r = self.session.get(unpaywall_url, timeout=10)
+            if r.status_code == 200:
+                data = r.json()
+                if data.get('is_oa'):
+                    best_loc = data.get('best_oa_location') or {}
+                    pdf_url = best_loc.get('url_for_pdf')
+                    if pdf_url:
+                        return pdf_url
+        except Exception:
+            pass
+            
+        # Try OpenAlex
+        try:
+            clean_doi = doi.strip()
+            openalex_url = f"https://api.openalex.org/works/doi:{clean_doi}"
+            r = self.session.get(openalex_url, timeout=10)
+            if r.status_code == 200:
+                data = r.json()
+                oa_data = data.get('open_access') or {}
+                if oa_data.get('is_oa'):
+                    pdf_url = oa_data.get('oa_url')
+                    if pdf_url and pdf_url.endswith('.pdf'):
+                        return pdf_url
+                    prim_loc = data.get('primary_location') or {}
+                    pdf_url = prim_loc.get('pdf_url')
+                    if pdf_url:
+                        return pdf_url
+        except Exception:
+            pass
+            
+        return None
+
     def download_paper(self, doi: str, title: str = "") -> bool:
         """Download single paper with retries"""
+        is_url = doi.startswith('http://') or doi.startswith('https://')
+        
         for attempt in range(self.max_retries):
             try:
                 if attempt > 0:
                     print(f"{ColorText.YELLOW}  Retry {attempt}/{self.max_retries}...{ColorText.ENDC}")
                     time.sleep(2)
                 
-                # Fetch paper page
-                search_url = urljoin(self.mirror, doi)
-                print(f"{ColorText.CYAN}  Fetching: {search_url}{ColorText.ENDC}")
-                
-                response = self.session.get(search_url, headers=HEADERS, timeout=15)
-                
-                if response.status_code != 200:
-                    if attempt == self.max_retries - 1:
-                        raise Exception(f"HTTP {response.status_code}")
-                    continue
-                
-                # Extract PDF URL
-                pdf_url = self.extract_pdf_url(response.text)
+                pdf_url = None
+                if is_url:
+                    pdf_url = doi
+                    print(f"{ColorText.CYAN}  Downloading direct link: {pdf_url[:80]}...{ColorText.ENDC}")
+                else:
+                    # It's a DOI, try OpenAccess APIs first if provider is auto or oa
+                    if self.provider in ['auto', 'oa']:
+                        pdf_url = self.resolve_via_open_access(doi)
+                        if pdf_url:
+                            print(f"{ColorText.GREEN}  Resolved via Open Access API: {pdf_url[:80]}...{ColorText.ENDC}")
+                    
+                    if not pdf_url and self.provider in ['auto', 'scihub']:
+                        # Fetch from Sci-Hub mirror
+                        search_url = urljoin(self.mirror, doi)
+                        print(f"{ColorText.CYAN}  Fetching Sci-Hub: {search_url}{ColorText.ENDC}")
+                        response = self.session.get(search_url, headers=HEADERS, timeout=15)
+                        if response.status_code != 200:
+                            if attempt == self.max_retries - 1:
+                                raise Exception(f"HTTP {response.status_code}")
+                            continue
+                        pdf_url = self.extract_pdf_url(response.text)
                 
                 if not pdf_url:
                     if attempt == self.max_retries - 1:
                         raise Exception("PDF link not found")
                     continue
-                
-                print(f"{ColorText.CYAN}  PDF URL: {pdf_url[:80]}...{ColorText.ENDC}")
                 
                 # Download PDF
                 pdf_response = self.session.get(pdf_url, headers=HEADERS, timeout=30, stream=True)
@@ -153,7 +293,14 @@ class BulkDownloader:
                     continue
                 
                 # Save file
-                filename = re.sub(r'[^\w\-_\.]', '_', doi) + '.pdf'
+                if is_url:
+                    base_name = urlparse(pdf_url).path.split('/')[-1]
+                    if not base_name.endswith('.pdf'):
+                        base_name = re.sub(r'[^\w\-_\.]', '_', base_name) + '.pdf'
+                    filename = base_name
+                else:
+                    filename = re.sub(r'[^\w\-_\.]', '_', doi) + '.pdf'
+                
                 filepath = os.path.join(self.output_dir, filename)
                 
                 bytes_downloaded = 0
@@ -165,19 +312,24 @@ class BulkDownloader:
                 
                 # Validate PDF
                 file_size = os.path.getsize(filepath)
-                
                 if file_size < 1000:
-                    os.remove(filepath)
+                    if os.path.exists(filepath):
+                        os.remove(filepath)
                     if attempt == self.max_retries - 1:
                         raise Exception("File too small (< 1KB)")
                     continue
                 
+                is_valid_pdf = False
                 with open(filepath, 'rb') as f:
-                    if f.read(4) != b'%PDF':
+                    if f.read(4) == b'%PDF':
+                        is_valid_pdf = True
+                
+                if not is_valid_pdf:
+                    if os.path.exists(filepath):
                         os.remove(filepath)
-                        if attempt == self.max_retries - 1:
-                            raise Exception("Invalid PDF file")
-                        continue
+                    if attempt == self.max_retries - 1:
+                        raise Exception("Invalid PDF file")
+                    continue
                 
                 print(f"{ColorText.GREEN}✓ Success{ColorText.ENDC} - {file_size / 1024:.2f} KB")
                 
@@ -273,16 +425,22 @@ Examples:
   
   # Interactive mode
   python scihub_bulk_cli.py -i -o ./papers
+
+  # Filter mode: extract DOIs and links from any document
+  python scihub_bulk_cli.py -f document.txt --filter -o ./papers
         """
     )
     
-    parser.add_argument('-f', '--file', help='Input file (CSV or TXT with DOIs)')
+    parser.add_argument('-f', '--file', help='Input file (CSV, TXT, DOCX or PDF with DOIs)')
     parser.add_argument('-i', '--interactive', action='store_true', help='Interactive mode (paste DOIs)')
     parser.add_argument('-o', '--output', default='./downloads', help='Output directory')
     parser.add_argument('-m', '--mirror', default=SCIHUB_URL, help='Sci-Hub mirror URL')
     parser.add_argument('-d', '--delay', type=float, default=0, help='Delay between downloads (seconds)')
     parser.add_argument('-r', '--retries', type=int, default=3, help='Max retries per paper')
     parser.add_argument('-e', '--export', help='Export results to CSV/JSON')
+    parser.add_argument('-p', '--provider', default='auto', choices=['auto', 'oa', 'scihub'],
+                        help="Download provider: 'auto' (tries OA APIs first, falls back to Sci-Hub), 'oa' (Open Access APIs only), 'scihub' (Sci-Hub only)")
+    parser.add_argument('--filter', action='store_true', help="Filter and extract DOIs and links from the input file instead of treating it as direct list of DOIs")
     
     args = parser.parse_args()
     
@@ -290,7 +448,8 @@ Examples:
         output_dir=args.output,
         mirror=args.mirror,
         delay=args.delay,
-        max_retries=args.retries
+        max_retries=args.retries,
+        provider=args.provider
     )
     
     dois = []
@@ -301,33 +460,46 @@ Examples:
             print(f"{ColorText.RED}Error: File not found: {args.file}{ColorText.ENDC}")
             sys.exit(1)
         
-        print(f"Loading DOIs from {args.file}...")
-        dois = downloader.load_dois(args.file)
-        
-        # Try to load titles from CSV
-        if args.file.endswith('.csv'):
-            with open(args.file, 'r', encoding='utf-8') as f:
-                reader = csv.reader(f)
-                next(reader, None)  # Skip header
-                
-                for row in reader:
-                    if len(row) > 1:
-                        titles.append(row[1])
-                    else:
-                        titles.append("")
+        if args.filter:
+            print(f"Filtering DOIs and links from {args.file}...")
+            dois, urls = filter_dois_and_links_from_file(args.file)
+            all_targets = dois + urls
+            dois = all_targets
+            titles = [""] * len(dois)
+        else:
+            print(f"Loading DOIs from {args.file}...")
+            dois = downloader.load_dois(args.file)
+            
+            # Try to load titles from CSV
+            if args.file.endswith('.csv'):
+                with open(args.file, 'r', encoding='utf-8') as f:
+                    reader = csv.reader(f)
+                    next(reader, None)  # Skip header
+                    
+                    for row in reader:
+                        if len(row) > 1:
+                            titles.append(row[1])
+                        else:
+                            titles.append("")
+            else:
+                titles = [""] * len(dois)
     
     elif args.interactive:
-        print("Enter DOIs (one per line, press Ctrl+D to finish):")
+        print("Enter DOIs or direct URLs (one per line, press Ctrl+D to finish):")
         print()
         
         try:
             while True:
                 line = input().strip()
                 if line and not line.startswith('#'):
-                    doi = downloader.validate_doi(line)
-                    if doi:
-                        dois.append(doi)
+                    if line.startswith('http://') or line.startswith('https://'):
+                        dois.append(line)
                         titles.append("")
+                    else:
+                        doi = downloader.validate_doi(line)
+                        if doi:
+                            dois.append(doi)
+                            titles.append("")
         except EOFError:
             pass
     
@@ -335,8 +507,14 @@ Examples:
         parser.print_help()
         sys.exit(1)
     
+    # Enforce limit of 50 papers
+    if len(dois) > 50:
+        print(f"{ColorText.YELLOW}⚠️  Warning: Download limit is 50 papers at a time. Truncating list to the first 50 papers.{ColorText.ENDC}")
+        dois = dois[:50]
+        titles = titles[:50]
+        
     if not dois:
-        print(f"{ColorText.RED}Error: No valid DOIs found{ColorText.ENDC}")
+        print(f"{ColorText.RED}Error: No valid DOIs or links found{ColorText.ENDC}")
         sys.exit(1)
     
     results = downloader.download_batch(dois, titles)

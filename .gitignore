@@ -1,0 +1,7 @@
+downloads/
+downloads_test/
+eval_downloads/
+__pycache__/
+*.pyc
+.idea/
+.vscode/
