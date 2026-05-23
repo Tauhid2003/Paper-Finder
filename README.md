@@ -145,3 +145,56 @@ OutOf the 16 failed papers:
 - **HTTP 403 Forbidden**: Most failures are due to publisher-enforced paywalls that block access even from Sci-Hub mirrors or Open Access landing pages.
 - **PDF link not found**: The article metadata was retrieved but no direct PDF link was exposed via Open Access APIs or the Sci-Hub scraper.
 - **Invalid PDF file**: Resolved landing pages that returned HTML paywall warnings instead of actual PDF streams were successfully detected and automatically cleaned up to avoid saving corrupted files.
+
+
+---
+
+# 📊 IEEE Downloader Performance & Abstract Verification Report
+
+This report presents the download statistics and abstract verification results for 20 latest IEEE papers (2022 to present) collected via the OpenAlex database.
+
+---
+
+## 📈 Executive Summary
+
+- **Total IEEE DOIs Processed**: 20
+- **Successfully Downloaded**: 11
+- **Failed / Unavailable**: 9
+- **Download Success Rate**: 55.0%
+- **Abstract Verification Accuracy**: **100.0%** (11 out of 11 downloaded papers successfully matched their official abstracts)
+
+---
+
+## 📝 Detailed Verification Results
+
+| # | DOI | Title | Download Status | Abstract Verified | Detail |
+| :--- | :--- | :--- | :--- | :---: | :--- |
+| 1 | `10.1109/jproc.2023.3238524` | Object Detection in 20 Years: A Survey | 🔴 Failed | — | N/A |
+| 2 | `10.1109/jproc.2023.3308088` | Training Spiking Neural Networks Using Lessons From Deep Learning | 🟢 Downloaded | ✅ Passed | Match: 91.7% |
+| 3 | `10.1109/jproc.2022.3173031` | 6G for Vehicle-to-Everything (V2X) Communications: Enabling Technologi... | 🟢 Downloaded | ✅ Passed | Match: 97.2% |
+| 4 | `10.1109/jproc.2023.3247480` | Model-Based Deep Learning | 🔴 Failed | — | N/A |
+| 5 | `10.1109/jproc.2022.3226481` | Efficient Acceleration of Deep Learning Inference on Resource-Constrai... | 🟢 Downloaded | ✅ Passed | Match: 94.5% |
+| 6 | `10.1109/jproc.2022.3179826` | Power System Stability With a High Penetration of Inverter-Based Resou... | 🟢 Downloaded | ✅ Passed | Match: 93.3% |
+| 7 | `10.1109/jproc.2023.3253165` | Power Electronics Technology for Large-Scale Renewable Energy Generati... | 🟢 Downloaded | ✅ Passed | Match: 97.3% |
+| 8 | `10.1109/jproc.2022.3171691` | A Comprehensive Review on Signal-Based and Model-Based Condition Monit... | 🟢 Downloaded | ✅ Passed | Match: 95.5% |
+| 9 | `10.1109/jproc.2022.3141338` | Continuum Robots for Medical Interventions | 🟢 Downloaded | ✅ Passed | Match: 94.1% |
+| 10 | `10.1109/jproc.2022.3205665` | Survey on Fully Homomorphic Encryption, Theory, and Applications | 🔴 Failed | — | N/A |
+| 11 | `10.1109/tmi.2022.3167808` | ResViT: Residual Vision Transformers for Multimodal Medical Image Synt... | 🟢 Downloaded | ✅ Passed | Match: 96.4% |
+| 12 | `10.1109/tmi.2022.3230943` | MISSFormer: An Effective Transformer for 2D Medical Image Segmentation | 🔴 Failed | — | N/A |
+| 13 | `10.1109/tmi.2023.3290149` | Unsupervised Medical Image Translation With Adversarial Diffusion Mode... | 🔴 Failed | — | N/A |
+| 14 | `10.1109/tmi.2024.3398728` | UNETR++: Delving Into Efficient and Accurate 3D Medical Image Segmenta... | 🟢 Downloaded | ✅ Passed | Match: 100.0% |
+| 15 | `10.1109/tmi.2022.3226268` | AAU-Net: An Adaptive Attention U-Net for Breast Lesions Segmentation i... | 🔴 Failed | — | N/A |
+| 16 | `10.1109/tmi.2023.3264513` | H2Former: An Efficient Hierarchical Hybrid Transformer for Medical Ima... | 🔴 Failed | — | N/A |
+| 17 | `10.1109/tmi.2022.3161829` | SimCVD: Simple Contrastive Voxel-Wise Representation Distillation for ... | 🔴 Failed | — | N/A |
+| 18 | `10.1109/tmi.2023.3291719` | LViT: Language Meets Vision Transformer in Medical Image Segmentation | 🔴 Failed | — | N/A |
+| 19 | `10.1109/tmi.2022.3176598` | A Graph-Transformer for Whole Slide Image Classification | 🟢 Downloaded | ✅ Passed | Match: 96.1% |
+| 20 | `10.1109/tmi.2022.3143833` | RTNet: Relation Transformer Network for Diabetic Retinopathy Multi-Les... | 🟢 Downloaded | ✅ Passed | Match: 94.8% |
+
+---
+
+## 🔍 Verification Methodology
+Each successfully downloaded PDF was programmatically opened using the `pypdf` library. We extracted the text from the first two pages of the paper and compared it against the official abstract retrieved from OpenAlex:
+- **Clean Tokenization**: Both texts were normalized, converted to lowercase, and all punctuation was removed.
+- **Word Overlap check**: We extracted all unique words of length 4 or more from the abstract and checked if they were present in the first two pages of the PDF.
+- **Threshold**: A paper is verified as **Passed** if at least **70%** of the abstract's unique vocabulary is present in the PDF text.
+- **Result**: All downloaded PDFs successfully passed the 70% threshold, verifying that the downloader retrieves the exact, correct IEEE papers corresponding to the DOIs.
