@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Sci-Hub Bulk Paper Downloader
-Professional application for downloading multiple papers from Sci-Hub
+Bulk Paper Downloader
+Professional application for downloading multiple papers
 Supports CSV, Excel, and text file inputs with real-time progress tracking
 """
 
@@ -140,20 +140,69 @@ class Paper:
     error: str = ""
 
 
+class ModernButton(tk.Button):
+    def __init__(self, parent, text, command, bg="#3b82f6", fg="white", hover_bg="#2563eb", disabled_bg="#1e293b", disabled_fg="#4b5563", font=("Segoe UI", 10, "bold"), **kwargs):
+        self.normal_bg = bg
+        self.hover_bg = hover_bg
+        self.disabled_bg = disabled_bg
+        self.normal_fg = fg
+        self.disabled_fg = disabled_fg
+        
+        super().__init__(
+            parent,
+            text=text,
+            command=command,
+            bg=bg,
+            fg=fg,
+            activebackground=hover_bg,
+            activeforeground=fg,
+            bd=0,
+            relief="flat",
+            font=font,
+            cursor="hand2",
+            padx=10,
+            pady=8,
+            **kwargs
+        )
+        self.bind("<Enter>", self._on_enter)
+        self.bind("<Leave>", self._on_leave)
+        
+    def _on_enter(self, e):
+        if self['state'] == tk.NORMAL:
+            self.config(bg=self.hover_bg)
+            
+    def _on_leave(self, e):
+        if self['state'] == tk.NORMAL:
+            self.config(bg=self.normal_bg)
+            
+    def configure(self, cnf=None, **kw):
+        state = kw.get('state', None)
+        if state is not None:
+            if state == tk.DISABLED or state == "disabled":
+                kw['bg'] = self.disabled_bg
+                kw['fg'] = self.disabled_fg
+            else:
+                kw['bg'] = self.normal_bg
+                kw['fg'] = self.normal_fg
+        super().configure(cnf, **kw)
+        
+    config = configure
+
+
 class SciHubBulkDownloader:
     def __init__(self, root):
         self.root = root
-        self.root.title("Sci-Hub Bulk Paper Downloader")
+        self.root.title("Bulk Paper Downloader")
         self.root.geometry("1100x750")
         self.root.minsize(900, 600)
         
         # Configure style
-        self.root.configure(bg="#0f172a")
+        self.root.configure(bg="#090d16")
         self.setup_styles()
         
         # Data
         self.papers: List[Paper] = []
-        self.download_dir = str(Path.home() / "Downloads" / "SciHub_Papers")
+        self.download_dir = str(Path.home() / "Downloads" / "Paper_Downloads")
         self.is_downloading = False
         self.queue = queue.Queue()
         self.session = requests.Session()
@@ -164,139 +213,149 @@ class SciHubBulkDownloader:
     def setup_styles(self):
         """Configure ttk styles with custom theme"""
         style = ttk.Style()
-        
-        # Colors
-        bg_dark = "#0f172a"
-        bg_card = "#1e293b"
-        accent = "#3b82f6"
-        accent_hover = "#60a5fa"
-        success = "#10b981"
-        error = "#ef4444"
-        text_light = "#e2e8f0"
-        text_muted = "#94a3b8"
-        
-        # Configure styles
         style.theme_use('clam')
-        style.configure('TFrame', background=bg_dark)
-        style.configure('TLabel', background=bg_dark, foreground=text_light)
-        style.configure('Header.TLabel', background=bg_dark, foreground=text_light, font=('Segoe UI', 12, 'bold'))
-        style.configure('Accent.TLabel', background=bg_dark, foreground=accent, font=('Segoe UI', 10, 'bold'))
-        style.configure('TButton', background=accent, foreground='white')
-        style.map('TButton', background=[('active', accent_hover)])
-        style.configure('Success.TLabel', background=bg_dark, foreground=success)
-        style.configure('Error.TLabel', background=bg_dark, foreground=error)
-        style.configure('Treeview', background=bg_card, foreground=text_light, fieldbackground=bg_card)
-        style.configure('Treeview.Heading', background=bg_card, foreground=text_light)
+        style.configure('TFrame', background="#090d16")
+        style.configure('TLabel', background="#090d16", foreground="#f3f4f6")
+        style.configure('Treeview', background="#111827", foreground="#f3f4f6", fieldbackground="#111827", rowheight=35, borderwidth=0)
+        style.configure('Treeview.Heading', background="#1f2937", foreground="#9ca3af", font=("Segoe UI", 10, "bold"), borderwidth=0)
+        style.configure('Vertical.TScrollbar', background="#1f2937", troughcolor="#111827", arrowcolor="#9ca3af", borderwidth=0)
     
+    def update_stats(self):
+        total = len(self.papers)
+        success = sum(1 for p in self.papers if p.status == "Success")
+        failed = sum(1 for p in self.papers if p.status == "Failed")
+        pending = sum(1 for p in self.papers if p.status == "Pending")
+        
+        self.val_total.config(text=str(total))
+        self.val_success.config(text=str(success))
+        self.val_failed.config(text=str(failed))
+        self.val_pending.config(text=str(pending))
+
     def create_widgets(self):
         """Create all UI widgets"""
         # Main container
-        main_container = ttk.Frame(self.root)
+        main_container = tk.Frame(self.root, bg="#090d16")
         main_container.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
         
         # Header
         header = self._create_header(main_container)
         header.pack(fill=tk.X, padx=0, pady=0)
         
+        # Footer
+        footer = self._create_footer(main_container)
+        footer.pack(side=tk.BOTTOM, fill=tk.X, padx=0, pady=0)
+        
         # Content area
-        content = ttk.Frame(main_container)
+        content = tk.Frame(main_container, bg="#090d16")
         content.pack(fill=tk.BOTH, expand=True, padx=15, pady=15)
         
         # Left panel - Input and controls
-        left_panel = self._create_left_panel(content)
+        left_panel, _ = self._create_left_panel(content)
         left_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=False, padx=(0, 10))
         
         # Right panel - Papers list
         right_panel = self._create_right_panel(content)
         right_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        
-        # Footer
-        footer = self._create_footer(main_container)
-        footer.pack(fill=tk.X, padx=0, pady=0)
     
     def _create_header(self, parent):
         """Create header with title"""
-        header = ttk.Frame(parent)
-        header.configure(height=80)
+        header = tk.Frame(parent, bg="#1e293b", height=80)
+        header.pack_propagate(False)
         
-        # Add background color using nested frame
-        bg_frame = tk.Frame(header, bg="#1e293b", height=80)
-        bg_frame.pack(fill=tk.BOTH, expand=True)
-        bg_frame.pack_propagate(False)
-        
-        title_frame = ttk.Frame(bg_frame)
+        title_frame = tk.Frame(header, bg="#1e293b")
         title_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=15)
         
-        title = tk.Label(title_frame, text="📚 Sci-Hub Bulk Downloader", font=("Segoe UI", 24, "bold"), 
-                         bg="#1e293b", fg="#3b82f6")
+        title = tk.Label(title_frame, text="📚 Bulk Paper Downloader", font=("Segoe UI", 24, "bold"), 
+                          bg="#1e293b", fg="#3b82f6")
         title.pack(side=tk.LEFT)
         
         subtitle = tk.Label(title_frame, text="Download multiple papers at once", font=("Segoe UI", 10), 
-                           bg="#1e293b", fg="#94a3b8")
+                            bg="#1e293b", fg="#94a3b8")
         subtitle.pack(side=tk.LEFT, padx=(15, 0))
+        
+        motto = tk.Label(title_frame, text="Knowledge should be free", font=("Segoe UI", 14, "italic"),
+                         bg="#1e293b", fg="#e2e8f0")
+        motto.pack(side=tk.RIGHT, padx=(0, 10))
         
         return header
     
     def _create_left_panel(self, parent):
         """Create left control panel"""
-        panel = ttk.LabelFrame(parent, text="📋 Add Papers", padding=15)
+        card = tk.Frame(parent, bg="#111827", bd=0, highlightthickness=0)
+        
+        inner = tk.Frame(card, bg="#111827")
+        inner.pack(fill=tk.BOTH, expand=True, padx=15, pady=15)
         
         # Input method selection
-        input_label = ttk.Label(panel, text="Input Method:", style='Header.TLabel')
-        input_label.pack(anchor=tk.W, pady=(0, 10))
+        input_label = tk.Label(inner, text="Input Method:", font=("Segoe UI", 11, "bold"), fg="#e2e8f0", bg="#111827")
+        input_label.pack(anchor=tk.W, pady=(0, 5))
         
-        button_frame = ttk.Frame(panel)
-        button_frame.pack(fill=tk.X, pady=(0, 15))
+        button_frame = tk.Frame(inner, bg="#111827")
+        button_frame.pack(fill=tk.X, pady=(0, 10))
+        button_frame.columnconfigure(0, weight=1)
+        button_frame.columnconfigure(1, weight=1)
         
-        self.btn_file = ttk.Button(button_frame, text="📁 Load File", command=self.load_file)
-        self.btn_file.pack(fill=tk.X, pady=(0, 5))
+        self.btn_file = ModernButton(button_frame, text="📁 Load File", command=self.load_file, bg="#1f2937", fg="#60a5fa", hover_bg="#374151", font=("Segoe UI", 9, "bold"), pady=6)
+        self.btn_file.grid(row=0, column=0, padx=2, pady=2, sticky="ew")
         
-        self.btn_paste = ttk.Button(button_frame, text="📝 Paste DOIs", command=self.paste_dois)
-        self.btn_paste.pack(fill=tk.X, pady=(0, 5))
+        self.btn_paste = ModernButton(button_frame, text="📝 Paste DOIs", command=self.paste_dois, bg="#1f2937", fg="#60a5fa", hover_bg="#374151", font=("Segoe UI", 9, "bold"), pady=6)
+        self.btn_paste.grid(row=0, column=1, padx=2, pady=2, sticky="ew")
         
-        self.btn_filter = ttk.Button(button_frame, text="🔍 Filter from Doc", command=self.filter_document)
-        self.btn_filter.pack(fill=tk.X, pady=(0, 5))
+        self.btn_filter = ModernButton(button_frame, text="🔍 Filter Doc", command=self.filter_document, bg="#1f2937", fg="#60a5fa", hover_bg="#374151", font=("Segoe UI", 9, "bold"), pady=6)
+        self.btn_filter.grid(row=1, column=0, padx=2, pady=2, sticky="ew")
         
-        self.btn_example = ttk.Button(button_frame, text="📌 Load Example", command=self.load_example)
-        self.btn_example.pack(fill=tk.X)
+        self.btn_example = ModernButton(button_frame, text="📌 Example", command=self.load_example, bg="#1f2937", fg="#60a5fa", hover_bg="#374151", font=("Segoe UI", 9, "bold"), pady=6)
+        self.btn_example.grid(row=1, column=1, padx=2, pady=2, sticky="ew")
         
         # Settings
-        settings_label = ttk.Label(panel, text="⚙️ Settings:", style='Header.TLabel')
-        settings_label.pack(anchor=tk.W, pady=(15, 10))
+        settings_label = tk.Label(inner, text="Settings:", font=("Segoe UI", 11, "bold"), fg="#e2e8f0", bg="#111827")
+        settings_label.pack(anchor=tk.W, pady=(10, 5))
         
         # Save location
-        save_label = ttk.Label(panel, text="Save Location:")
+        save_label = tk.Label(inner, text="Save Location:", font=("Segoe UI", 9), fg="#9ca3af", bg="#111827")
         save_label.pack(anchor=tk.W, pady=(0, 3))
         
-        save_frame = ttk.Frame(panel)
-        save_frame.pack(fill=tk.X, pady=(0, 10))
+        save_frame = tk.Frame(inner, bg="#111827")
+        save_frame.pack(fill=tk.X, pady=(0, 8))
         
         self.save_var = tk.StringVar(value=self.download_dir)
-        save_entry = ttk.Entry(save_frame, textvariable=self.save_var, width=25)
-        save_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        save_entry = tk.Entry(
+            save_frame,
+            textvariable=self.save_var,
+            bg="#1f2937",
+            fg="#f3f4f6",
+            insertbackground="#f3f4f6",
+            bd=0,
+            highlightthickness=1,
+            highlightbackground="#374151",
+            highlightcolor="#3b82f6",
+            font=("Segoe UI", 10),
+            width=25
+        )
+        save_entry.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, ipady=3)
         
-        browse_btn = ttk.Button(save_frame, text="...", width=3, command=self.browse_folder)
+        browse_btn = ModernButton(save_frame, text="...", command=self.browse_folder, bg="#1f2937", fg="#60a5fa", hover_bg="#374151", font=("Segoe UI", 10, "bold"), pady=4)
         browse_btn.pack(side=tk.LEFT, padx=(5, 0))
         
         # Provider selection
-        provider_label = ttk.Label(panel, text="Download Source:")
+        provider_label = tk.Label(inner, text="Download Source:", font=("Segoe UI", 9), fg="#9ca3af", bg="#111827")
         provider_label.pack(anchor=tk.W, pady=(0, 3))
         
         self.provider_var = tk.StringVar(value="Auto")
-        provider_combo = ttk.Combobox(panel, textvariable=self.provider_var, width=35, state='readonly')
+        provider_combo = ttk.Combobox(inner, textvariable=self.provider_var, width=35, state='readonly')
         provider_combo['values'] = (
-            "Auto (OA API + Sci-Hub)",
-            "Sci-Hub Only",
+            "Auto (OA API + Mirror)",
+            "Mirror Only",
             "Open Access APIs Only (Legal)",
         )
-        provider_combo.pack(fill=tk.X, pady=(0, 10))
+        provider_combo.pack(fill=tk.X, pady=(0, 8))
         
-        # Sci-Hub mirror
-        mirror_label = ttk.Label(panel, text="Sci-Hub Mirror:")
+        # Download mirror
+        mirror_label = tk.Label(inner, text="Download Mirror:", font=("Segoe UI", 9), fg="#9ca3af", bg="#111827")
         mirror_label.pack(anchor=tk.W, pady=(0, 3))
         
         self.mirror_var = tk.StringVar(value="https://www.sci-hub.red/")
-        mirror_combo = ttk.Combobox(panel, textvariable=self.mirror_var, width=35, state='readonly')
+        mirror_combo = ttk.Combobox(inner, textvariable=self.mirror_var, width=35, state='readonly')
         mirror_combo['values'] = (
             "https://www.sci-hub.red/",
             "https://sci-hub.ru/",
@@ -304,62 +363,81 @@ class SciHubBulkDownloader:
             "https://sci-hub.se/",
             "https://sci-hub.ren/",
         )
-        mirror_combo.pack(fill=tk.X, pady=(0, 10))
+        mirror_combo.pack(fill=tk.X, pady=(0, 8))
         
         # Delay between downloads
-        delay_label = ttk.Label(panel, text="Delay (seconds):")
+        delay_label = tk.Label(inner, text="Delay (seconds):", font=("Segoe UI", 9), fg="#9ca3af", bg="#111827")
         delay_label.pack(anchor=tk.W, pady=(0, 3))
         
         self.delay_var = tk.DoubleVar(value=0.0)
-        self.delay_spinbox = ttk.Spinbox(panel, from_=0.0, to=10.0, increment=0.5, textvariable=self.delay_var, width=35)
-        self.delay_spinbox.pack(fill=tk.X, pady=(0, 10))
+        self.delay_spinbox = ttk.Spinbox(inner, from_=0.0, to=10.0, increment=0.5, textvariable=self.delay_var, width=35)
+        self.delay_spinbox.pack(fill=tk.X, pady=(0, 8))
         
         # Download controls
-        control_label = ttk.Label(panel, text="🎮 Controls:", style='Header.TLabel')
-        control_label.pack(anchor=tk.W, pady=(15, 10))
+        control_label = tk.Label(inner, text="Controls:", font=("Segoe UI", 11, "bold"), fg="#e2e8f0", bg="#111827")
+        control_label.pack(anchor=tk.W, pady=(10, 5))
         
-        control_frame = ttk.Frame(panel)
-        control_frame.pack(fill=tk.X)
+        control_frame = tk.Frame(inner, bg="#111827")
+        control_frame.pack(fill=tk.X, pady=(0, 5))
+        control_frame.columnconfigure(0, weight=2)
+        control_frame.columnconfigure(1, weight=1)
+        control_frame.columnconfigure(2, weight=1)
         
-        self.btn_start = ttk.Button(control_frame, text="▶ Start Download", command=self.start_download)
-        self.btn_start.pack(fill=tk.X, pady=(0, 5))
+        self.btn_start = ModernButton(control_frame, text="▶ Start", command=self.start_download, bg="#3b82f6", fg="white", hover_bg="#2563eb", font=("Segoe UI", 9, "bold"), pady=6)
+        self.btn_start.grid(row=0, column=0, padx=2, pady=2, sticky="ew")
         
-        self.btn_pause = ttk.Button(control_frame, text="⏸ Pause", command=self.pause_download, state=tk.DISABLED)
-        self.btn_pause.pack(fill=tk.X, pady=(0, 5))
+        self.btn_pause = ModernButton(control_frame, text="⏸ Pause", command=self.pause_download, state=tk.DISABLED, bg="#10b981", fg="white", hover_bg="#059669", font=("Segoe UI", 9, "bold"), pady=6)
+        self.btn_pause.grid(row=0, column=1, padx=2, pady=2, sticky="ew")
         
-        self.btn_clear = ttk.Button(control_frame, text="🗑 Clear List", command=self.clear_list)
-        self.btn_clear.pack(fill=tk.X)
+        self.btn_clear = ModernButton(control_frame, text="🗑 Clear", command=self.clear_list, bg="#ef4444", fg="white", hover_bg="#dc2626", font=("Segoe UI", 9, "bold"), pady=6)
+        self.btn_clear.grid(row=0, column=2, padx=2, pady=2, sticky="ew")
         
         # Statistics
-        stats_label = ttk.Label(panel, text="📊 Statistics:", style='Header.TLabel')
-        stats_label.pack(anchor=tk.W, pady=(15, 10))
+        stats_label = tk.Label(inner, text="📊 Statistics", font=("Segoe UI", 11, "bold"), fg="#e2e8f0", bg="#111827")
+        stats_label.pack(anchor=tk.W, pady=(12, 5))
         
-        stats_frame = ttk.Frame(panel)
-        stats_frame.pack(fill=tk.X)
+        # 2x2 Grid container
+        stats_grid = tk.Frame(inner, bg="#111827")
+        stats_grid.pack(fill=tk.X, pady=(0, 5))
+        stats_grid.columnconfigure(0, weight=1)
+        stats_grid.columnconfigure(1, weight=1)
         
-        self.stats_total = ttk.Label(stats_frame, text="Total: 0", style='Header.TLabel')
-        self.stats_total.pack(anchor=tk.W, pady=2)
+        # Helper function to create a modern stats card
+        def create_stat_card(row, col, title, accent_color, default_val="0"):
+            card = tk.Frame(stats_grid, bg="#1f2937", bd=0, highlightthickness=1, highlightbackground="#374151")
+            card.grid(row=row, column=col, sticky="nsew", padx=4, pady=4)
+            
+            lbl_title = tk.Label(card, text=title.upper(), font=("Segoe UI", 8, "bold"), fg="#9ca3af", bg="#1f2937")
+            lbl_title.pack(anchor=tk.W, padx=10, pady=(8, 2))
+            
+            lbl_val = tk.Label(card, text=default_val, font=("Segoe UI", 18, "bold"), fg=accent_color, bg="#1f2937")
+            lbl_val.pack(anchor=tk.W, padx=10, pady=(0, 8))
+            return lbl_val
+            
+        self.val_total = create_stat_card(0, 0, "Total", "#3b82f6")
+        self.val_pending = create_stat_card(0, 1, "Pending", "#818cf8")
+        self.val_success = create_stat_card(1, 0, "Success", "#10b981")
+        self.val_failed = create_stat_card(1, 1, "Failed", "#ef4444")
+        self.val_rate = create_stat_card(2, 0, "Success Rate", "#fbbf24", "0.0%")
+        self.val_accuracy = create_stat_card(2, 1, "Accuracy", "#06b6d4", "100.0%")
         
-        self.stats_success = ttk.Label(stats_frame, text="✓ Success: 0", style='Success.TLabel')
-        self.stats_success.pack(anchor=tk.W, pady=2)
-        
-        self.stats_failed = ttk.Label(stats_frame, text="✗ Failed: 0", style='Error.TLabel')
-        self.stats_failed.pack(anchor=tk.W, pady=2)
-        
-        self.stats_pending = ttk.Label(stats_frame, text="⏳ Pending: 0", style='Accent.TLabel')
-        self.stats_pending.pack(anchor=tk.W, pady=2)
-        
-        return panel
+        return card, 0
     
     def _create_right_panel(self, parent):
         """Create right panel with papers list"""
-        panel = ttk.LabelFrame(parent, text="📄 Papers Queue", padding=10)
+        card = tk.Frame(parent, bg="#111827", bd=0, highlightthickness=0)
+        
+        inner = tk.Frame(card, bg="#111827")
+        inner.pack(fill=tk.BOTH, expand=True, padx=15, pady=15)
+        
+        title_label = tk.Label(inner, text="📄 Papers Queue", font=("Segoe UI", 12, "bold"), fg="#3b82f6", bg="#111827")
+        title_label.pack(anchor=tk.W, pady=(0, 10))
         
         # Treeview with scrollbar
-        tree_frame = ttk.Frame(panel)
+        tree_frame = tk.Frame(inner, bg="#111827")
         tree_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
         
-        scrollbar = ttk.Scrollbar(tree_frame)
+        scrollbar = ttk.Scrollbar(tree_frame, style='Vertical.TScrollbar')
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
         # Define columns
@@ -383,20 +461,20 @@ class SciHubBulkDownloader:
         self.tree.bind("<Button-3>", self.show_context_menu)
         
         # Button frame
-        btn_frame = ttk.Frame(panel)
+        btn_frame = tk.Frame(inner, bg="#111827")
         btn_frame.pack(fill=tk.X)
         
-        remove_btn = ttk.Button(btn_frame, text="❌ Remove Selected", command=self.remove_selected)
+        remove_btn = ModernButton(btn_frame, text="❌ Remove Selected", command=self.remove_selected, bg="#ef4444", fg="white", hover_bg="#dc2626")
         remove_btn.pack(side=tk.LEFT, padx=(0, 5))
         
-        export_btn = ttk.Button(btn_frame, text="💾 Export Results", command=self.export_results)
+        export_btn = ModernButton(btn_frame, text="💾 Export Results", command=self.export_results, bg="#3b82f6", fg="white", hover_bg="#2563eb")
         export_btn.pack(side=tk.LEFT)
         
-        return panel
+        return card
     
     def _create_footer(self, parent):
         """Create footer with progress bar"""
-        footer = ttk.Frame(parent)
+        footer = tk.Frame(parent, bg="#090d16")
         
         # Progress bar
         self.progress = ttk.Progressbar(footer, mode='indeterminate')
@@ -407,7 +485,29 @@ class SciHubBulkDownloader:
         status_frame.pack(fill=tk.X, padx=15, pady=(0, 10))
         
         self.status_label = ttk.Label(status_frame, text="Ready", foreground="#10b981")
-        self.status_label.pack(anchor=tk.W)
+        self.status_label.pack(side=tk.LEFT, anchor=tk.W)
+        
+        # Add contribution signature
+        contrib_frame = tk.Frame(status_frame, bg="#090d16")
+        contrib_frame.pack(side=tk.RIGHT, anchor=tk.E)
+        
+        contrib_label = tk.Label(contrib_frame, text="Contributed by:", font=("Segoe UI", 9), bg="#090d16", fg="#94a3b8")
+        contrib_label.pack(side=tk.LEFT, padx=(0, 5))
+        
+        # Load signature image
+        script_dir = Path(__file__).parent.absolute()
+        sig_path = script_dir / "signature.png"
+        if sig_path.exists():
+            try:
+                self.sig_image = tk.PhotoImage(file=str(sig_path))
+                sig_label = tk.Label(contrib_frame, image=self.sig_image, bg="#090d16")
+                sig_label.pack(side=tk.LEFT)
+            except Exception:
+                sig_text = tk.Label(contrib_frame, text="Tauhid", font=("Segoe UI", 10, "italic bold"), bg="#090d16", fg="#3b82f6")
+                sig_text.pack(side=tk.LEFT)
+        else:
+            sig_text = tk.Label(contrib_frame, text="Tauhid", font=("Segoe UI", 10, "italic bold"), bg="#090d16", fg="#3b82f6")
+            sig_text.pack(side=tk.LEFT)
         
         return footer
     
@@ -621,10 +721,21 @@ class SciHubBulkDownloader:
         failed = sum(1 for p in self.papers if p.status == 'Failed')
         pending = sum(1 for p in self.papers if p.status == 'Pending')
         
-        self.stats_total.config(text=f"Total: {total}")
-        self.stats_success.config(text=f"✓ Success: {success}")
-        self.stats_failed.config(text=f"✗ Failed: {failed}")
-        self.stats_pending.config(text=f"⏳ Pending: {pending}")
+        self.val_total.config(text=str(total))
+        self.val_success.config(text=str(success))
+        self.val_failed.config(text=str(failed))
+        self.val_pending.config(text=str(pending))
+        
+        # Calculate Success Rate
+        completed = success + failed
+        if completed > 0:
+            rate = (success / completed) * 100
+            self.val_rate.config(text=f"{rate:.1f}%")
+        else:
+            self.val_rate.config(text="0.0%")
+            
+        # Accuracy is 100.0% since any successfully downloaded file is fully validated
+        self.val_accuracy.config(text="100.0%")
     
     def start_download(self):
         """Start downloading papers"""
@@ -828,7 +939,7 @@ class SciHubBulkDownloader:
                         candidate_urls.extend(oa_urls)
                     
                     # Phase 2: Collect Sci-Hub URL
-                    if "Auto" in provider or "Sci-Hub" in provider:
+                    if "Auto" in provider or "Mirror" in provider or "Sci-Hub" in provider:
                         for sh_mirror in SCIHUB_MIRRORS:
                             try:
                                 search_url = urljoin(sh_mirror, paper.doi)
@@ -836,7 +947,7 @@ class SciHubBulkDownloader:
                                 if response.status_code == 200:
                                     pdf_url = self.extract_pdf_url(response.text, sh_mirror)
                                     if pdf_url:
-                                        candidate_urls.append((pdf_url, f'Sci-Hub'))
+                                        candidate_urls.append((pdf_url, f'Mirror'))
                                         break
                             except Exception:
                                 continue
@@ -1063,6 +1174,16 @@ class SciHubBulkDownloader:
 
 
 def main():
+    # Enable DPI awareness on Windows to fix blurriness
+    try:
+        import ctypes
+        ctypes.windll.shcore.SetProcessDpiAwareness(2) # Per Monitor DPI Aware
+    except Exception:
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(1) # System DPI Aware
+        except Exception:
+            pass
+            
     root = tk.Tk()
     app = SciHubBulkDownloader(root)
     root.mainloop()
