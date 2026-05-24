@@ -283,10 +283,46 @@ class SciHubBulkDownloader:
     
     def _create_left_panel(self, parent):
         """Create left control panel"""
-        card = tk.Frame(parent, bg="#111827", bd=0, highlightthickness=0)
+        card = tk.Frame(parent, bg="#111827", bd=0, highlightthickness=0, width=330)
+        card.pack_propagate(False)
         
-        inner = tk.Frame(card, bg="#111827")
+        # Create Canvas for scrolling
+        canvas = tk.Canvas(card, bg="#111827", highlightthickness=0)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        # Create Scrollbar
+        scrollbar = ttk.Scrollbar(card, style='Vertical.TScrollbar', command=canvas.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Scrollable container frame inside Canvas
+        scrollable_frame = tk.Frame(canvas, bg="#111827")
+        canvas_window = canvas.create_window((0, 0), window=scrollable_frame, anchor=tk.NW)
+        
+        # The inner frame with 15px margins where all widgets reside
+        inner = tk.Frame(scrollable_frame, bg="#111827")
         inner.pack(fill=tk.BOTH, expand=True, padx=15, pady=15)
+        
+        # Update scrollregion and frame widths on configuration changes
+        def on_canvas_configure(event):
+            canvas.itemconfig(canvas_window, width=event.width)
+            
+        def on_scrollable_configure(event):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            
+        canvas.bind('<Configure>', on_canvas_configure)
+        scrollable_frame.bind('<Configure>', on_scrollable_configure)
+        
+        # Handle mouse wheel scrolling
+        def _on_mousewheel(event):
+            if canvas.winfo_height() < scrollable_frame.winfo_height():
+                if event.num == 4:
+                    canvas.yview_scroll(-1, "units")
+                elif event.num == 5:
+                    canvas.yview_scroll(1, "units")
+                else:
+                    canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
         
         # Input method selection
         input_label = tk.Label(inner, text="Input Method:", font=("Segoe UI", 11, "bold"), fg="#e2e8f0", bg="#111827")
@@ -422,6 +458,16 @@ class SciHubBulkDownloader:
         self.val_failed = create_stat_card(1, 1, "Failed", "#ef4444")
         self.val_rate = create_stat_card(2, 0, "Success Rate", "#fbbf24", "0.0%")
         self.val_accuracy = create_stat_card(2, 1, "Accuracy", "#06b6d4", "100.0%")
+        
+        # Recursively bind mousewheel to inner and all its widgets
+        def bind_mouse_wheel_recursive(widget):
+            widget.bind("<MouseWheel>", _on_mousewheel)
+            widget.bind("<Button-4>", _on_mousewheel)
+            widget.bind("<Button-5>", _on_mousewheel)
+            for child in widget.winfo_children():
+                bind_mouse_wheel_recursive(child)
+                
+        bind_mouse_wheel_recursive(inner)
         
         return card, 0
     
