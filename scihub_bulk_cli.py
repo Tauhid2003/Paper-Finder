@@ -331,8 +331,11 @@ class BulkDownloader:
             if pdf_response.status_code != 200:
                 return None, f"HTTP {pdf_response.status_code}"
             
+            start_download_time = time.time()
             chunks = []
             for chunk in pdf_response.iter_content(chunk_size=8192):
+                if time.time() - start_download_time > 60:
+                    return None, "Download reading timed out (>60s)"
                 if chunk:
                     chunks.append(chunk)
             
