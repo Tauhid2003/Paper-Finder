@@ -148,6 +148,8 @@ class ModernButton(tk.Button):
         self.normal_fg = fg
         self.disabled_fg = disabled_fg
         
+        padx = kwargs.pop('padx', 10)
+        pady = kwargs.pop('pady', 8)
         super().__init__(
             parent,
             text=text,
@@ -160,8 +162,8 @@ class ModernButton(tk.Button):
             relief="flat",
             font=font,
             cursor="hand2",
-            padx=10,
-            pady=8,
+            padx=padx,
+            pady=pady,
             **kwargs
         )
         self.bind("<Enter>", self._on_enter)
