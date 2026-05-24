@@ -3,8 +3,8 @@
 ## 📦 What You Got
 
 ```
-scihub_bulk_downloader.py     ← GUI Version (easiest)
-scihub_bulk_cli.py             ← CLI Version (most powerful)
+paper_bulk_downloader.py     ← GUI Version (easiest)
+paper_bulk_cli.py             ← CLI Version (most powerful)
 BULK_MODE_GUIDE.md             ← Full documentation
 example_dois.csv               ← Example CSV file
 example_dois.txt               ← Example text file
@@ -17,7 +17,7 @@ example_dois.txt               ← Example text file
 ### GUI Version (Recommended for Beginners)
 
 ```bash
-python scihub_bulk_downloader.py
+python paper_bulk_downloader.py
 ```
 
 Then:
@@ -32,7 +32,7 @@ Done! ✓
 
 ```bash
 # Download from example file
-python scihub_bulk_cli.py -f example_dois.csv -o ./my_papers
+python paper_bulk_cli.py -f example_dois.csv -o ./my_papers
 
 # That's it!
 ```
@@ -67,25 +67,25 @@ In GUI: Click "📝 Paste DOIs" and paste your list
 
 ```bash
 # GUI - visual, interactive
-python scihub_bulk_downloader.py
+python paper_bulk_downloader.py
 
 # CLI - from CSV file
-python scihub_bulk_cli.py -f papers.csv -o ./downloads
+python paper_bulk_cli.py -f papers.csv -o ./downloads
 
 # CLI - from text file
-python scihub_bulk_cli.py -f papers.txt -o ./downloads
+python paper_bulk_cli.py -f papers.txt -o ./downloads
 
 # CLI - interactive (paste DOIs)
-python scihub_bulk_cli.py -i -o ./downloads
+python paper_bulk_cli.py -i -o ./downloads
 
 # CLI - with slow download (safer)
-python scihub_bulk_cli.py -f papers.csv -o ./downloads -d 2
+python paper_bulk_cli.py -f papers.csv -o ./downloads -d 2
 
 # CLI - export results
-python scihub_bulk_cli.py -f papers.csv -o ./downloads -e results.csv
+python paper_bulk_cli.py -f papers.csv -o ./downloads -e results.csv
 
 # CLI - use different mirror
-python scihub_bulk_cli.py -f papers.csv -o ./downloads -m https://sci-hub.ru/
+python paper_bulk_cli.py -f papers.csv -o ./downloads -m https://sci-hub.ru/
 ```
 
 ---
@@ -156,7 +156,7 @@ First row = headers. Columns 2+ optional.
 ### Using GUI
 
 ```
-1. python scihub_bulk_downloader.py
+1. python paper_bulk_downloader.py
 2. Click "📁 Load File"
 3. Select papers.csv
 4. Verify papers in list
@@ -177,7 +177,7 @@ cat > papers.txt << EOF
 EOF
 
 # Download all
-python scihub_bulk_cli.py -f papers.txt -o ./papers -e results.csv
+python paper_bulk_cli.py -f papers.txt -o ./papers -e results.csv
 
 # View results
 cat results.csv
@@ -193,7 +193,7 @@ cat results.csv
 
 **CLI**: Use `-o` flag
 ```bash
-python scihub_bulk_cli.py -f papers.csv -o /path/to/save
+python paper_bulk_cli.py -f papers.csv -o /path/to/save
 ```
 
 ### Use Different Mirror
@@ -202,7 +202,7 @@ python scihub_bulk_cli.py -f papers.csv -o /path/to/save
 
 **CLI**: Use `-m` flag
 ```bash
-python scihub_bulk_cli.py -f papers.csv -m https://sci-hub.ru/
+python paper_bulk_cli.py -f papers.csv -m https://sci-hub.ru/
 ```
 
 Available mirrors:
@@ -217,7 +217,7 @@ Available mirrors:
 
 **CLI**: Use `-d` flag
 ```bash
-python scihub_bulk_cli.py -f papers.csv -d 2
+python paper_bulk_cli.py -f papers.csv -d 2
 # Wait 2 seconds between downloads
 ```
 
@@ -275,7 +275,7 @@ Total: 3
 
 1. **Check DOI format** - Should be like: `10.1029/2010RS004406`
 2. **Try different mirror** - Some papers on different mirrors
-3. **Add delay** - `python scihub_bulk_cli.py -f papers.csv -d 2`
+3. **Add delay** - `python paper_bulk_cli.py -f papers.csv -d 2`
 4. **Check internet** - Make sure you're online
 
 ### File not found?
@@ -318,8 +318,8 @@ A: Check the exported results.csv or results.json
 
 ### Scripts
 
-- **scihub_bulk_downloader.py** - Full GUI application
-- **scihub_bulk_cli.py** - Command-line tool
+- **paper_bulk_downloader.py** - Full GUI application
+- **paper_bulk_cli.py** - Command-line tool
 
 ### Examples
 
@@ -337,12 +337,12 @@ A: Check the exported results.csv or results.json
 
 ### For Beginners:
 ```bash
-python scihub_bulk_downloader.py
+python paper_bulk_downloader.py
 ```
 
 ### For Power Users:
 ```bash
-python scihub_bulk_cli.py -f papers.csv -o ./downloads
+python paper_bulk_cli.py -f papers.csv -o ./downloads
 ```
 
 ---

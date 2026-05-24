@@ -4,8 +4,8 @@
 
 Two powerful tools for downloading multiple papers at once:
 
-1. **GUI Version** (`scihub_bulk_downloader.py`) - Visual interface with progress tracking
-2. **CLI Version** (`scihub_bulk_cli.py`) - Command-line for automation and scripting
+1. **GUI Version** (`paper_bulk_downloader.py`) - Visual interface with progress tracking
+2. **CLI Version** (`paper_bulk_cli.py`) - Command-line for automation and scripting
 
 Choose based on your preference:
 - **GUI**: User-friendly, visual feedback, point-and-click
@@ -36,7 +36,7 @@ pip install openpyxl
 ### Running the Application
 
 ```bash
-python scihub_bulk_downloader.py
+python paper_bulk_downloader.py
 ```
 
 ### Features
@@ -158,32 +158,32 @@ Real-time updates showing:
 
 ```bash
 # Download from CSV file
-python scihub_bulk_cli.py -f dois.csv -o ./papers
+python paper_bulk_cli.py -f dois.csv -o ./papers
 
 # Download from text file
-python scihub_bulk_cli.py -f dois.txt -o ./papers
+python paper_bulk_cli.py -f dois.txt -o ./papers
 
 # Interactive mode (paste DOIs)
-python scihub_bulk_cli.py -i -o ./papers
+python paper_bulk_cli.py -i -o ./papers
 ```
 
 #### Advanced Options
 
 ```bash
 # With delay between downloads (avoid being blocked)
-python scihub_bulk_cli.py -f dois.csv -o ./papers --delay 2
+python paper_bulk_cli.py -f dois.csv -o ./papers --delay 2
 
 # Use different Sci-Hub mirror
-python scihub_bulk_cli.py -f dois.csv -o ./papers -m https://sci-hub.ru/
+python paper_bulk_cli.py -f dois.csv -o ./papers -m https://sci-hub.ru/
 
 # Custom retries per paper
-python scihub_bulk_cli.py -f dois.csv -o ./papers --retries 5
+python paper_bulk_cli.py -f dois.csv -o ./papers --retries 5
 
 # Export results
-python scihub_bulk_cli.py -f dois.csv -o ./papers -e results.csv
+python paper_bulk_cli.py -f dois.csv -o ./papers -e results.csv
 
 # Combine options
-python scihub_bulk_cli.py -f dois.csv -o ./papers -m https://sci-hub.st/ -d 1 -r 3 -e results.json
+python paper_bulk_cli.py -f dois.csv -o ./papers -m https://sci-hub.st/ -d 1 -r 3 -e results.json
 ```
 
 ### CLI Arguments
@@ -202,7 +202,7 @@ python scihub_bulk_cli.py -f dois.csv -o ./papers -m https://sci-hub.st/ -d 1 -r
 ### Interactive Mode
 
 ```bash
-$ python scihub_bulk_cli.py -i -o ./papers
+$ python paper_bulk_cli.py -i -o ./papers
 
 Enter DOIs (one per line, press Ctrl+D to finish):
 
@@ -326,7 +326,7 @@ Papers that fail to download are retried automatically:
 
 ```bash
 # Use 5 retries per paper (default is 3)
-python scihub_bulk_cli.py -f dois.csv -r 5
+python paper_bulk_cli.py -f dois.csv -r 5
 ```
 
 Each retry waits 2 seconds before attempting again.
@@ -337,10 +337,10 @@ Add delay between downloads to avoid being rate-limited:
 
 ```bash
 # Wait 2 seconds between each download
-python scihub_bulk_cli.py -f dois.csv -d 2
+python paper_bulk_cli.py -f dois.csv -d 2
 
 # Wait 5 seconds
-python scihub_bulk_cli.py -f dois.csv -d 5
+python paper_bulk_cli.py -f dois.csv -d 5
 ```
 
 ### Multiple Mirrors
@@ -349,12 +349,12 @@ If the default mirror is slow or blocked:
 
 ```bash
 # Try different mirror
-python scihub_bulk_cli.py -f dois.csv -m https://sci-hub.ru/
+python paper_bulk_cli.py -f dois.csv -m https://sci-hub.ru/
 
 # Test which mirror is faster
 for mirror in "https://sci-hub.red/" "https://sci-hub.ru/" "https://sci-hub.st/"; do
   echo "Testing $mirror"
-  python scihub_bulk_cli.py -f dois.csv -m $mirror -e "results_${mirror##*/}.json"
+  python paper_bulk_cli.py -f dois.csv -m $mirror -e "results_${mirror##*/}.json"
 done
 ```
 
@@ -370,17 +370,17 @@ done
 
 2. **Try Different Mirror**
    ```bash
-   python scihub_bulk_cli.py -f dois.csv -m https://sci-hub.st/
+   python paper_bulk_cli.py -f dois.csv -m https://sci-hub.st/
    ```
 
 3. **Increase Retries**
    ```bash
-   python scihub_bulk_cli.py -f dois.csv -r 5
+   python paper_bulk_cli.py -f dois.csv -r 5
    ```
 
 4. **Add Delay**
    ```bash
-   python scihub_bulk_cli.py -f dois.csv -d 3
+   python paper_bulk_cli.py -f dois.csv -d 3
    ```
 
 ### Connection Issues?
@@ -413,7 +413,7 @@ Check that:
 ```bash
 # Download from different sources
 for file in papers_*.csv; do
-  python scihub_bulk_cli.py -f $file -o "./results/$file" -e "results/$file.json"
+  python paper_bulk_cli.py -f $file -o "./results/$file" -e "results/$file.json"
 done
 ```
 
@@ -423,7 +423,7 @@ done
 # Generate DOI list from database/API
 # Then feed to downloader
 
-python scihub_bulk_cli.py -i -o ./papers << EOF
+python paper_bulk_cli.py -i -o ./papers << EOF
 10.1029/2010RS004406
 10.1038/nature12373
 EOF
@@ -453,7 +453,7 @@ with open('combined.json', 'w') as f:
 ```bash
 # Create CSV with papers found on Google Scholar
 # Run bulk downloader
-python scihub_bulk_downloader.py
+python paper_bulk_downloader.py
 # Load CSV → Download → Export results
 ```
 
@@ -474,7 +474,7 @@ with open('temp_dois.txt', 'w') as f:
 
 # Run downloader
 result = subprocess.run([
-    'python', 'scihub_bulk_cli.py',
+    'python', 'paper_bulk_cli.py',
     '-f', 'temp_dois.txt',
     '-o', './papers',
     '-e', 'results.json'
@@ -490,7 +490,7 @@ with open('results.json') as f:
 
 ```bash
 # Download many papers with progress tracking
-python scihub_bulk_cli.py -f all_dois.csv -o ./papers -d 2 -e results.csv
+python paper_bulk_cli.py -f all_dois.csv -o ./papers -d 2 -e results.csv
 
 # Monitor in real-time
 watch -n 1 'tail -20 results.csv'
@@ -551,7 +551,7 @@ A: CLI is slightly faster. GUI is easier to use.
 ### Custom Download Script
 
 ```python
-from scihub_bulk_cli import BulkDownloader
+from paper_bulk_cli import BulkDownloader
 
 downloader = BulkDownloader(
     output_dir='./papers',

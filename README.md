@@ -19,7 +19,7 @@ A professional suite of tools (GUI & CLI) to download academic papers from the i
 ### 1. Graphical Interface (GUI)
 Run the GUI bulk downloader:
 ```bash
-python scihub_bulk_downloader.py
+python paper_bulk_downloader.py
 ```
 - **Load File**: Load a list of DOIs from CSV, Text, or Excel files.
 - **Paste DOIs**: Paste direct DOIs or any citation text. It will automatically filter DOIs and links.
@@ -31,13 +31,13 @@ python scihub_bulk_downloader.py
 Run the CLI bulk downloader:
 ```bash
 # Standard Bulk Download (loads a list of DOIs from a file)
-python scihub_bulk_cli.py -f list.txt -o ./downloads
+python paper_bulk_cli.py -f list.txt -o ./downloads
 
 # Filter Mode (scans and extracts DOIs/links from a document)
-python scihub_bulk_cli.py -f document.docx --filter -o ./downloads
+python paper_bulk_cli.py -f document.docx --filter -o ./downloads
 
 # Specify Download Provider (auto, oa, or scihub)
-python scihub_bulk_cli.py -f list.txt -p oa -o ./downloads
+python paper_bulk_cli.py -f list.txt -p oa -o ./downloads
 ```
 
 ---

@@ -191,7 +191,7 @@ class ModernButton(tk.Button):
     config = configure
 
 
-class SciHubBulkDownloader:
+class PaperBulkDownloader:
     def __init__(self, root):
         self.root = root
         self.root.title("Bulk Paper Downloader")
@@ -1251,7 +1251,7 @@ def main():
             pass
             
     root = tk.Tk()
-    app = SciHubBulkDownloader(root)
+    app = PaperBulkDownloader(root)
     root.mainloop()
 
 

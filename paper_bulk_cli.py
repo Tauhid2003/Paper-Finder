@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Sci-Hub Bulk Downloader - CLI Version
+Paper Bulk Downloader - CLI Version
 Command-line tool for downloading multiple papers with advanced options
 """
 
@@ -440,7 +440,7 @@ class BulkDownloader:
         self.results['total'] = len(dois)
         
         print(f"\n{ColorText.BOLD}{ColorText.BLUE}{'='*70}")
-        print(f"Sci-Hub Bulk Downloader")
+        print(f"Paper Bulk Downloader")
         print(f"{'='*70}{ColorText.ENDC}\n")
         
         print(f"📊 Papers to download: {ColorText.BOLD}{len(dois)}{ColorText.ENDC}")
@@ -479,24 +479,24 @@ class BulkDownloader:
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Sci-Hub Bulk Paper Downloader',
+        description='Paper Bulk Downloader',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   # Download from CSV file
-  python scihub_bulk_cli.py -f dois.csv -o ./papers
+  python paper_bulk_cli.py -f dois.csv -o ./papers
   
   # Download from text file with delay
-  python scihub_bulk_cli.py -f dois.txt -o ./papers --delay 2
+  python paper_bulk_cli.py -f dois.txt -o ./papers --delay 2
   
   # Use different mirror
-  python scihub_bulk_cli.py -f dois.csv -o ./papers -m https://sci-hub.ru/
+  python paper_bulk_cli.py -f dois.csv -o ./papers -m https://sci-hub.ru/
   
   # Interactive mode
-  python scihub_bulk_cli.py -i -o ./papers
-
+  python paper_bulk_cli.py -i -o ./papers
+  
   # Filter mode: extract DOIs and links from any document
-  python scihub_bulk_cli.py -f document.txt --filter -o ./papers
+  python paper_bulk_cli.py -f document.txt --filter -o ./papers
         """
     )
     
