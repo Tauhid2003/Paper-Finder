@@ -547,7 +547,25 @@ class SciHubBulkDownloader:
         sig_path = script_dir / "signature.png"
         if sig_path.exists():
             try:
-                self.sig_image = tk.PhotoImage(file=str(sig_path))
+                # Try to use PIL to resize the image to fit the footer nicely
+                try:
+                    from PIL import Image, ImageTk
+                    pil_img = Image.open(sig_path)
+                    # Target height: 20px, calculate width keeping aspect ratio
+                    aspect = pil_img.width / pil_img.height
+                    target_h = 20
+                    target_w = int(target_h * aspect)
+                    pil_img_resized = pil_img.resize((target_w, target_h), Image.Resampling.LANCZOS)
+                    self.sig_image = ImageTk.PhotoImage(pil_img_resized)
+                except Exception:
+                    # Fallback to standard PhotoImage if PIL is not available
+                    self.sig_image = tk.PhotoImage(file=str(sig_path))
+                    # If it's too large, subsample it
+                    if self.sig_image.height() > 40:
+                        scale = self.sig_image.height() // 20
+                        if scale > 1:
+                            self.sig_image = self.sig_image.subsample(scale, scale)
+                
                 sig_label = tk.Label(contrib_frame, image=self.sig_image, bg="#090d16")
                 sig_label.pack(side=tk.LEFT)
             except Exception:
