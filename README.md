@@ -25,6 +25,7 @@ python scihub_bulk_downloader.py
 - **Paste DOIs**: Paste direct DOIs or any citation text. It will automatically filter DOIs and links.
 - **Filter from Doc**: Select a document (e.g. text, CSV, Word `.docx`, or PDF) to scan and download all citations found within it.
 - **Download Source**: Select between "Auto (OA API + Sci-Hub)", "Sci-Hub Only", or "Open Access Only".
+- **Delay (seconds)**: Configure a download delay between papers to respect API rate limits and avoid IP blocks.
 
 ### 2. Command Line Interface (CLI)
 Run the CLI bulk downloader:

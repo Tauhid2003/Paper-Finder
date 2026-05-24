@@ -19,6 +19,7 @@ from datetime import datetime
 import queue
 from dataclasses import dataclass
 from typing import List, Optional
+import time
 
 # Try to import openpyxl for Excel support
 try:
@@ -35,6 +36,14 @@ HEADERS = {
 }
 
 SCIHUB_URL = "https://www.sci-hub.red/"
+
+SCIHUB_MIRRORS = [
+    "https://www.sci-hub.red/",
+    "https://sci-hub.ru/",
+    "https://sci-hub.st/",
+    "https://sci-hub.se/",
+    "https://sci-hub.ren/",
+]
 
 def extract_dois_from_text(text: str) -> List[str]:
     # Match standard DOIs, e.g., 10.1016/j.cageo.2015.09.007
@@ -89,7 +98,7 @@ def filter_dois_and_links_from_file(file_path: str) -> tuple[List[str], List[str
                 text_list.append(page.extract_text() or "")
             text = " ".join(text_list)
         except ImportError:
-            print("PDF filtering requires 'pypdf' library. Try: pip install pypdf")
+            raise ImportError("PDF filtering requires 'pypdf' library. Please install it with: pip install pypdf")
         except Exception as e:
             print(f"Error reading PDF document: {e}")
     else:
@@ -147,10 +156,10 @@ class SciHubBulkDownloader:
         self.download_dir = str(Path.home() / "Downloads" / "SciHub_Papers")
         self.is_downloading = False
         self.queue = queue.Queue()
+        self.session = requests.Session()
         
         # Create UI
         self.create_widgets()
-        self.monitor_queue()
     
     def setup_styles(self):
         """Configure ttk styles with custom theme"""
@@ -292,9 +301,18 @@ class SciHubBulkDownloader:
             "https://www.sci-hub.red/",
             "https://sci-hub.ru/",
             "https://sci-hub.st/",
+            "https://sci-hub.se/",
             "https://sci-hub.ren/",
         )
         mirror_combo.pack(fill=tk.X, pady=(0, 10))
+        
+        # Delay between downloads
+        delay_label = ttk.Label(panel, text="Delay (seconds):")
+        delay_label.pack(anchor=tk.W, pady=(0, 3))
+        
+        self.delay_var = tk.DoubleVar(value=0.0)
+        self.delay_spinbox = ttk.Spinbox(panel, from_=0.0, to=10.0, increment=0.5, textvariable=self.delay_var, width=35)
+        self.delay_spinbox.pack(fill=tk.X, pady=(0, 10))
         
         # Download controls
         control_label = ttk.Label(panel, text="🎮 Controls:", style='Header.TLabel')
@@ -627,125 +645,259 @@ class SciHubBulkDownloader:
         thread = threading.Thread(target=self.download_papers)
         thread.daemon = True
         thread.start()
+        
+        self.monitor_queue()
     
-    def resolve_via_open_access(self, doi: str) -> Optional[str]:
-        """Try to resolve DOI to direct PDF URL using Unpaywall and OpenAlex APIs"""
-        # Try Unpaywall first
+    def resolve_all_open_access_urls(self, doi: str) -> list:
+        """Collect ALL available PDF URLs from multiple Open Access APIs.
+        Returns a list of (url, source_name) tuples, ordered by priority."""
+        found_urls = []
+        seen_urls = set()
+        clean_doi = doi.strip()
+        
+        def _add(url, source):
+            if url and url not in seen_urls:
+                seen_urls.add(url)
+                found_urls.append((url, source))
+        
+        # Source 1: Unpaywall
         try:
-            clean_doi = doi.strip()
             unpaywall_url = f"https://api.unpaywall.org/v2/{clean_doi}?email=paper_finder_downloader_tool_1234@gmail.com"
-            r = requests.get(unpaywall_url, headers=HEADERS, timeout=10)
+            r = self.session.get(unpaywall_url, headers=HEADERS, timeout=10)
             if r.status_code == 200:
                 data = r.json()
                 if data.get('is_oa'):
                     best_loc = data.get('best_oa_location') or {}
-                    pdf_url = best_loc.get('url_for_pdf')
-                    if pdf_url:
-                        return pdf_url
+                    _add(best_loc.get('url_for_pdf'), 'Unpaywall')
+                    for loc in data.get('oa_locations', []):
+                        _add(loc.get('url_for_pdf'), 'Unpaywall')
         except Exception:
             pass
-            
-        # Try OpenAlex
+
+        # Source 2: OpenAlex
         try:
-            clean_doi = doi.strip()
             openalex_url = f"https://api.openalex.org/works/doi:{clean_doi}"
-            r = requests.get(openalex_url, headers=HEADERS, timeout=10)
+            r = self.session.get(openalex_url, headers=HEADERS, timeout=10)
             if r.status_code == 200:
                 data = r.json()
                 oa_data = data.get('open_access') or {}
                 if oa_data.get('is_oa'):
-                    pdf_url = oa_data.get('oa_url')
-                    if pdf_url and pdf_url.endswith('.pdf'):
-                        return pdf_url
                     prim_loc = data.get('primary_location') or {}
-                    pdf_url = prim_loc.get('pdf_url')
-                    if pdf_url:
-                        return pdf_url
+                    _add(prim_loc.get('pdf_url'), 'OpenAlex')
+                    oa_url = oa_data.get('oa_url')
+                    if oa_url and oa_url.endswith('.pdf'):
+                        _add(oa_url, 'OpenAlex')
+                    for loc in data.get('locations', []):
+                        _add(loc.get('pdf_url'), 'OpenAlex')
         except Exception:
             pass
+
+        # Source 3: Semantic Scholar
+        try:
+            s2_url = f"https://api.semanticscholar.org/graph/v1/paper/DOI:{clean_doi}?fields=isOpenAccess,openAccessPdf"
+            r = self.session.get(s2_url, headers=HEADERS, timeout=10)
+            if r.status_code == 200:
+                data = r.json()
+                if data.get('isOpenAccess'):
+                    oa_pdf = data.get('openAccessPdf') or {}
+                    _add(oa_pdf.get('url'), 'Semantic Scholar')
+        except Exception:
+            pass
+
+        # Source 4: Europe PMC
+        try:
+            epmc_url = f"https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=DOI:{clean_doi}&format=json&resultType=core"
+            r = self.session.get(epmc_url, headers=HEADERS, timeout=10)
+            if r.status_code == 200:
+                results = r.json().get('resultList', {}).get('result', [])
+                if results:
+                    result = results[0]
+                    if result.get('isOpenAccess') == 'Y':
+                        pmcid = result.get('pmcid')
+                        if pmcid:
+                            _add(f"https://europepmc.org/backend/ptpmcrender.fcgi?accid={pmcid}&blobtype=pdf", 'Europe PMC')
+        except Exception:
+            pass
+
+        # Source 5: CORE API
+        try:
+            core_url = f"https://api.core.ac.uk/v3/search/works?q=doi:%22{clean_doi}%22&limit=1"
+            r = self.session.get(core_url, timeout=10, headers={**HEADERS, 'Authorization': 'Bearer free'})
+            if r.status_code == 200:
+                data = r.json()
+                results = data.get('results', [])
+                if results:
+                    _add(results[0].get('downloadUrl'), 'CORE')
+        except Exception:
+            pass
+
+        # Source 6: DOI Direct Redirect Check
+        try:
+            doi_url = f"https://doi.org/{clean_doi}"
+            r = self.session.get(doi_url, headers=HEADERS, timeout=10, allow_redirects=True)
+            final_url = r.url
+            if final_url.endswith('.pdf'):
+                _add(final_url, 'DOI Direct')
+            elif 'application/pdf' in r.headers.get('Content-Type', ''):
+                _add(final_url, 'DOI Direct')
+        except Exception:
+            pass
+
+        return found_urls
+
+    def _try_download_pdf(self, session, pdf_url: str) -> tuple:
+        """Attempt to download a PDF from a URL. Returns (content_bytes, error_str).
+        Uses Referer header matching the URL domain to bypass publisher blocks."""
+        try:
+            parsed = urlparse(pdf_url)
+            download_headers = {
+                **HEADERS,
+                'Referer': f"{parsed.scheme}://{parsed.netloc}/",
+                'Accept': 'application/pdf,*/*',
+            }
+            pdf_response = session.get(pdf_url, headers=download_headers, timeout=30, stream=True)
             
-        return None
+            if pdf_response.status_code != 200:
+                return None, f"HTTP {pdf_response.status_code}"
+            
+            chunks = []
+            for chunk in pdf_response.iter_content(chunk_size=8192):
+                if chunk:
+                    chunks.append(chunk)
+            
+            content = b''.join(chunks)
+            
+            if len(content) < 1000:
+                return None, "File too small (< 1KB)"
+            
+            if not content[:4] == b'%PDF':
+                return None, "Invalid PDF file"
+            
+            return content, None
+        except Exception as e:
+            return None, str(e)
+
+    def _interruptible_sleep(self, seconds: float):
+        """Sleep in small steps to remain responsive to pause"""
+        steps = int(seconds / 0.1)
+        for _ in range(steps):
+            if not self.is_downloading:
+                break
+            time.sleep(0.1)
+        remainder = seconds % 0.1
+        if remainder > 0 and self.is_downloading:
+            time.sleep(remainder)
 
     def download_papers(self):
-        """Download all papers"""
-        session = requests.Session()
-        mirror = self.mirror_var.get()
+        """Download all papers using multi-source resolution"""
+        session = self.session
         provider = self.provider_var.get()
+        delay = self.delay_var.get()
         
         Path(self.download_dir).mkdir(parents=True, exist_ok=True)
         
-        for i, paper in enumerate(self.papers):
-            if not self.is_downloading:
-                break
-            
-            if paper.status == "Success":
-                continue
+        success_count = 0
+        failed_count = 0
+        
+        try:
+            for i, paper in enumerate(self.papers):
+                if not self.is_downloading:
+                    break
                 
-            filepath = None
-            try:
+                if paper.status == "Success":
+                    continue
+                
                 paper.status = "Downloading..."
                 self.queue.put(('status', f"Downloading {paper.doi}..."))
                 self.queue.put(('update', i))
                 
                 is_url = paper.doi.startswith('http://') or paper.doi.startswith('https://')
                 
-                pdf_url = None
+                # Build candidate URL list
+                candidate_urls = []
+                
                 if is_url:
-                    pdf_url = paper.doi
+                    candidate_urls.append((paper.doi, 'Direct Link'))
                 else:
+                    # Phase 1: Collect all Open Access URLs
                     if "Auto" in provider or "Open Access" in provider:
-                        pdf_url = self.resolve_via_open_access(paper.doi)
+                        oa_urls = self.resolve_all_open_access_urls(paper.doi)
+                        candidate_urls.extend(oa_urls)
                     
-                    if not pdf_url and ("Auto" in provider or "Sci-Hub" in provider):
-                        search_url = urljoin(mirror, paper.doi)
-                        response = session.get(search_url, headers=HEADERS, timeout=15)
-                        if response.status_code != 200:
-                            raise Exception("Paper not found")
-                        pdf_url = self.extract_pdf_url(response.text, mirror)
+                    # Phase 2: Collect Sci-Hub URL
+                    if "Auto" in provider or "Sci-Hub" in provider:
+                        for sh_mirror in SCIHUB_MIRRORS:
+                            try:
+                                search_url = urljoin(sh_mirror, paper.doi)
+                                response = session.get(search_url, headers=HEADERS, timeout=15)
+                                if response.status_code == 200:
+                                    pdf_url = self.extract_pdf_url(response.text, sh_mirror)
+                                    if pdf_url:
+                                        candidate_urls.append((pdf_url, f'Sci-Hub'))
+                                        break
+                            except Exception:
+                                continue
                 
-                if not pdf_url:
-                    raise Exception("PDF link not found")
+                if not candidate_urls:
+                    paper.status = "Failed"
+                    paper.error = "PDF link not found"
+                    self.queue.put(('error', f"Failed {paper.doi}: PDF link not found"))
+                    self.queue.put(('update', i))
+                    failed_count += 1
+                    continue
                 
-                pdf_response = session.get(pdf_url, headers=HEADERS, timeout=30, stream=True)
+                # Phase 3: Try each candidate URL
+                last_error = "Unknown error"
+                success = False
                 
-                if is_url:
-                    base_name = urlparse(pdf_url).path.split('/')[-1]
-                    if not base_name.endswith('.pdf'):
-                        base_name = re.sub(r'[^\w\-_\.]', '_', base_name) + '.pdf'
-                    filename = base_name
-                else:
-                    filename = re.sub(r'[^\w\-_\.]', '_', paper.doi) + '.pdf'
+                for pdf_url, source in candidate_urls:
+                    if not self.is_downloading:
+                        break
+                        
+                    content, error = self._try_download_pdf(session, pdf_url)
                     
-                filepath = os.path.join(self.download_dir, filename)
+                    if content is not None:
+                        # Save the valid PDF
+                        if is_url:
+                            base_name = urlparse(pdf_url).path.split('/')[-1]
+                            if not base_name.endswith('.pdf'):
+                                base_name = re.sub(r'[^\w\-_\.]', '_', base_name) + '.pdf'
+                            filename = base_name
+                        else:
+                            filename = re.sub(r'[^\w\-_\.]', '_', paper.doi) + '.pdf'
+                        
+                        filepath = os.path.join(self.download_dir, filename)
+                        with open(filepath, 'wb') as f:
+                            f.write(content)
+                        
+                        paper.status = "Success"
+                        paper.file_path = filepath
+                        self.queue.put(('success', f"Downloaded {paper.doi} via {source}"))
+                        success = True
+                        success_count += 1
+                        break
+                    else:
+                        last_error = error
                 
-                with open(filepath, 'wb') as f:
-                    for chunk in pdf_response.iter_content(chunk_size=8192):
-                        if chunk:
-                            f.write(chunk)
+                if not success:
+                    if self.is_downloading:
+                        paper.status = "Failed"
+                        paper.error = last_error
+                        self.queue.put(('error', f"Failed {paper.doi}: {last_error}"))
+                        failed_count += 1
                 
-                # Validate PDF
-                if os.path.getsize(filepath) < 1000:
-                    raise Exception("File too small (< 1KB)")
-                    
-                with open(filepath, 'rb') as f:
-                    if f.read(4) != b'%PDF':
-                        raise Exception("Invalid PDF file")
+                self.queue.put(('update', i))
                 
-                paper.status = "Success"
-                paper.file_path = filepath
-                self.queue.put(('success', f"Downloaded {paper.doi}"))
-                
-            except Exception as e:
-                paper.status = "Failed"
-                paper.error = str(e)
-                if filepath and os.path.exists(filepath):
-                    try:
-                        os.remove(filepath)
-                    except:
-                        pass
-                self.queue.put(('error', f"Failed {paper.doi}: {str(e)}"))
-            
-            self.queue.put(('update', i))
+                if delay > 0 and i < len(self.papers) - 1 and self.is_downloading:
+                    self.queue.put(('status', f"Waiting {delay}s before next download..."))
+                    self._interruptible_sleep(delay)
+        finally:
+            was_paused = not self.is_downloading
+            self.is_downloading = False
+            if was_paused:
+                self.queue.put(('paused', None))
+            else:
+                self.queue.put(('finished', (success_count, failed_count)))
     
     def extract_pdf_url(self, html: str, mirror: str) -> Optional[str]:
         """Extract PDF URL from HTML"""
@@ -767,10 +919,17 @@ class SciHubBulkDownloader:
             url = match.group(1)
             return urljoin(mirror, url) if url.startswith('/') else url
         
+        # Method 4: fetch call
+        match = re.search(r'fetch\(["\']([^"\']*\.pdf[^"\']*)["\']', html)
+        if match:
+            url = match.group(1)
+            return urljoin(mirror, url) if url.startswith('/') else url
+        
         return None
     
     def monitor_queue(self):
         """Monitor download progress queue"""
+        keep_monitoring = True
         try:
             while True:
                 msg_type, data = self.queue.get_nowait()
@@ -783,17 +942,30 @@ class SciHubBulkDownloader:
                     pass
                 elif msg_type == 'error':
                     pass
+                elif msg_type == 'paused':
+                    self.progress.stop()
+                    self.btn_start.config(state=tk.NORMAL)
+                    self.btn_pause.config(state=tk.DISABLED)
+                    self.update_status("Paused")
+                    keep_monitoring = False
+                elif msg_type == 'finished':
+                    self.progress.stop()
+                    self.btn_start.config(state=tk.NORMAL)
+                    self.btn_pause.config(state=tk.DISABLED)
+                    self.update_status("Finished")
+                    
+                    success_count, failed_count = data
+                    messagebox.showinfo(
+                        "Download Complete", 
+                        f"Downloads finished!\n\n✓ Success: {success_count}\n✗ Failed: {failed_count}"
+                    )
+                    keep_monitoring = False
         
         except queue.Empty:
             pass
         
-        if self.is_downloading:
+        if keep_monitoring and self.is_downloading:
             self.root.after(100, self.monitor_queue)
-        else:
-            self.progress.stop()
-            self.btn_start.config(state=tk.NORMAL)
-            self.btn_pause.config(state=tk.DISABLED)
-            self.update_status("Ready")
     
     def pause_download(self):
         """Pause download"""

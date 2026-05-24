@@ -78,7 +78,7 @@ def filter_dois_and_links_from_file(file_path: str) -> tuple[List[str], List[str
                 text_list.append(page.extract_text() or "")
             text = " ".join(text_list)
         except ImportError:
-            print("PDF filtering requires 'pypdf' library. Try: pip install pypdf")
+            raise ImportError("PDF filtering requires 'pypdf' library. Please install it with: pip install pypdf")
         except Exception as e:
             print(f"Error reading PDF document: {e}")
     else:
@@ -114,7 +114,14 @@ HEADERS = {
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
 }
 
-SCIHUB_URL = "https://www.sci-hub.red/"
+SCIHUB_MIRRORS = [
+    "https://www.sci-hub.red/",
+    "https://sci-hub.ru/",
+    "https://sci-hub.st/",
+    "https://sci-hub.se/",
+    "https://sci-hub.ren/",
+]
+SCIHUB_URL = SCIHUB_MIRRORS[0]  # Default
 
 
 class ColorText:
@@ -180,119 +187,214 @@ class BulkDownloader:
         
         return dois
     
-    def extract_pdf_url(self, html: str) -> Optional[str]:
+    def extract_pdf_url(self, html: str, mirror: str = None) -> Optional[str]:
         """Extract PDF URL from HTML"""
+        if mirror is None:
+            mirror = self.mirror
+            
         # Method 1: url variable
         match = re.search(r'url:\s*["\']([^"\']+\.pdf)["\']', html)
         if match:
             url = match.group(1)
-            return urljoin(self.mirror, url) if url.startswith('/') else url
+            return urljoin(mirror, url) if url.startswith('/') else url
         
         # Method 2: meta tag
         match = re.search(r'content=["\']([^"\']*\.pdf[^"\']*)["\']', html)
         if match:
             url = match.group(1)
-            return urljoin(self.mirror, url) if url.startswith('/') else url
+            return urljoin(mirror, url) if url.startswith('/') else url
         
         # Method 3: iframe
         match = re.search(r'<iframe[^>]*src=["\']([^"\']+)["\']', html)
         if match:
             url = match.group(1)
-            return urljoin(self.mirror, url) if url.startswith('/') else url
+            return urljoin(mirror, url) if url.startswith('/') else url
         
         # Method 4: fetch call
         match = re.search(r'fetch\(["\']([^"\']*\.pdf[^"\']*)["\']', html)
         if match:
             url = match.group(1)
-            return urljoin(self.mirror, url) if url.startswith('/') else url
+            return urljoin(mirror, url) if url.startswith('/') else url
         
         return None
     
-    def resolve_via_open_access(self, doi: str) -> Optional[str]:
-        """Try to resolve DOI to direct PDF URL using Unpaywall and OpenAlex APIs"""
-        # Try Unpaywall first
+    def resolve_all_open_access_urls(self, doi: str) -> list:
+        """Collect ALL available PDF URLs from multiple Open Access APIs.
+        Returns a list of (url, source_name) tuples, ordered by priority."""
+        found_urls = []
+        seen_urls = set()
+        clean_doi = doi.strip()
+        
+        def _add(url, source):
+            if url and url not in seen_urls:
+                seen_urls.add(url)
+                found_urls.append((url, source))
+        
+        # Source 1: Unpaywall
         try:
-            clean_doi = doi.strip()
-            # Use a polite email to avoid blocking
             unpaywall_url = f"https://api.unpaywall.org/v2/{clean_doi}?email=paper_finder_downloader_tool_1234@gmail.com"
             r = self.session.get(unpaywall_url, timeout=10)
             if r.status_code == 200:
                 data = r.json()
                 if data.get('is_oa'):
                     best_loc = data.get('best_oa_location') or {}
-                    pdf_url = best_loc.get('url_for_pdf')
-                    if pdf_url:
-                        return pdf_url
+                    _add(best_loc.get('url_for_pdf'), 'Unpaywall')
+                    # Also collect alternate OA locations
+                    for loc in data.get('oa_locations', []):
+                        _add(loc.get('url_for_pdf'), 'Unpaywall')
         except Exception:
             pass
-            
-        # Try OpenAlex
+
+        # Source 2: OpenAlex
         try:
-            clean_doi = doi.strip()
             openalex_url = f"https://api.openalex.org/works/doi:{clean_doi}"
             r = self.session.get(openalex_url, timeout=10)
             if r.status_code == 200:
                 data = r.json()
                 oa_data = data.get('open_access') or {}
                 if oa_data.get('is_oa'):
-                    pdf_url = oa_data.get('oa_url')
-                    if pdf_url and pdf_url.endswith('.pdf'):
-                        return pdf_url
                     prim_loc = data.get('primary_location') or {}
-                    pdf_url = prim_loc.get('pdf_url')
-                    if pdf_url:
-                        return pdf_url
+                    _add(prim_loc.get('pdf_url'), 'OpenAlex')
+                    oa_url = oa_data.get('oa_url')
+                    if oa_url and oa_url.endswith('.pdf'):
+                        _add(oa_url, 'OpenAlex')
+                    for loc in data.get('locations', []):
+                        _add(loc.get('pdf_url'), 'OpenAlex')
         except Exception:
             pass
+
+        # Source 3: Semantic Scholar
+        try:
+            s2_url = f"https://api.semanticscholar.org/graph/v1/paper/DOI:{clean_doi}?fields=isOpenAccess,openAccessPdf"
+            r = self.session.get(s2_url, timeout=10)
+            if r.status_code == 200:
+                data = r.json()
+                if data.get('isOpenAccess'):
+                    oa_pdf = data.get('openAccessPdf') or {}
+                    _add(oa_pdf.get('url'), 'Semantic Scholar')
+        except Exception:
+            pass
+
+        # Source 4: Europe PMC
+        try:
+            epmc_url = f"https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=DOI:{clean_doi}&format=json&resultType=core"
+            r = self.session.get(epmc_url, timeout=10)
+            if r.status_code == 200:
+                results = r.json().get('resultList', {}).get('result', [])
+                if results:
+                    result = results[0]
+                    if result.get('isOpenAccess') == 'Y':
+                        pmcid = result.get('pmcid')
+                        if pmcid:
+                            _add(f"https://europepmc.org/backend/ptpmcrender.fcgi?accid={pmcid}&blobtype=pdf", 'Europe PMC')
+        except Exception:
+            pass
+
+        # Source 5: CORE API
+        try:
+            core_url = f"https://api.core.ac.uk/v3/search/works?q=doi:%22{clean_doi}%22&limit=1"
+            r = self.session.get(core_url, timeout=10, headers={**HEADERS, 'Authorization': 'Bearer free'})
+            if r.status_code == 200:
+                data = r.json()
+                results = data.get('results', [])
+                if results:
+                    _add(results[0].get('downloadUrl'), 'CORE')
+        except Exception:
+            pass
+
+        # Source 6: DOI Direct Redirect Check
+        try:
+            doi_url = f"https://doi.org/{clean_doi}"
+            r = self.session.get(doi_url, headers=HEADERS, timeout=10, allow_redirects=True)
+            final_url = r.url
+            if final_url.endswith('.pdf'):
+                _add(final_url, 'DOI Direct')
+            elif 'application/pdf' in r.headers.get('Content-Type', ''):
+                _add(final_url, 'DOI Direct')
+        except Exception:
+            pass
+
+        return found_urls
+
+    def _try_download_pdf(self, pdf_url: str) -> tuple:
+        """Attempt to download a PDF from a URL. Returns (content_bytes, error_str).
+        Uses Referer header matching the URL domain to bypass publisher blocks."""
+        try:
+            parsed = urlparse(pdf_url)
+            download_headers = {
+                **HEADERS,
+                'Referer': f"{parsed.scheme}://{parsed.netloc}/",
+                'Accept': 'application/pdf,*/*',
+            }
+            pdf_response = self.session.get(pdf_url, headers=download_headers, timeout=30, stream=True)
             
-        return None
+            if pdf_response.status_code != 200:
+                return None, f"HTTP {pdf_response.status_code}"
+            
+            chunks = []
+            for chunk in pdf_response.iter_content(chunk_size=8192):
+                if chunk:
+                    chunks.append(chunk)
+            
+            content = b''.join(chunks)
+            
+            if len(content) < 1000:
+                return None, "File too small (< 1KB)"
+            
+            if not content[:4] == b'%PDF':
+                return None, "Invalid PDF file"
+            
+            return content, None
+        except Exception as e:
+            return None, str(e)
 
     def download_paper(self, doi: str, title: str = "") -> bool:
-        """Download single paper with retries"""
+        """Download single paper by trying all available sources sequentially."""
         is_url = doi.startswith('http://') or doi.startswith('https://')
+        last_error = "No sources available"
         
-        for attempt in range(self.max_retries):
-            try:
-                if attempt > 0:
-                    print(f"{ColorText.YELLOW}  Retry {attempt}/{self.max_retries}...{ColorText.ENDC}")
-                    time.sleep(2)
-                
-                pdf_url = None
-                if is_url:
-                    pdf_url = doi
-                    print(f"{ColorText.CYAN}  Downloading direct link: {pdf_url[:80]}...{ColorText.ENDC}")
-                else:
-                    # It's a DOI, try OpenAccess APIs first if provider is auto or oa
-                    if self.provider in ['auto', 'oa']:
-                        pdf_url = self.resolve_via_open_access(doi)
-                        if pdf_url:
-                            print(f"{ColorText.GREEN}  Resolved via Open Access API: {pdf_url[:80]}...{ColorText.ENDC}")
-                    
-                    if not pdf_url and self.provider in ['auto', 'scihub']:
-                        # Fetch from Sci-Hub mirror
-                        search_url = urljoin(self.mirror, doi)
-                        print(f"{ColorText.CYAN}  Fetching Sci-Hub: {search_url}{ColorText.ENDC}")
+        # Build a list of all candidate URLs to try
+        candidate_urls = []  # List of (url, source_name)
+        
+        if is_url:
+            candidate_urls.append((doi, 'Direct Link'))
+        else:
+            # Phase 1: Collect all Open Access URLs
+            if self.provider in ['auto', 'oa']:
+                print(f"{ColorText.CYAN}  Querying Open Access APIs...{ColorText.ENDC}")
+                oa_urls = self.resolve_all_open_access_urls(doi)
+                candidate_urls.extend(oa_urls)
+                if oa_urls:
+                    print(f"{ColorText.GREEN}  Found {len(oa_urls)} OA source(s): {', '.join(s for _, s in oa_urls)}{ColorText.ENDC}")
+            
+            # Phase 2: Collect Sci-Hub URLs
+            if self.provider in ['auto', 'scihub']:
+                for sh_mirror in SCIHUB_MIRRORS:
+                    try:
+                        search_url = urljoin(sh_mirror, doi)
+                        print(f"{ColorText.CYAN}  Fetching: {search_url}{ColorText.ENDC}")
                         response = self.session.get(search_url, headers=HEADERS, timeout=15)
-                        if response.status_code != 200:
-                            if attempt == self.max_retries - 1:
-                                raise Exception(f"HTTP {response.status_code}")
-                            continue
-                        pdf_url = self.extract_pdf_url(response.text)
-                
-                if not pdf_url:
-                    if attempt == self.max_retries - 1:
-                        raise Exception("PDF link not found")
-                    continue
-                
-                # Download PDF
-                pdf_response = self.session.get(pdf_url, headers=HEADERS, timeout=30, stream=True)
-                
-                if pdf_response.status_code != 200:
-                    if attempt == self.max_retries - 1:
-                        raise Exception(f"Download HTTP {pdf_response.status_code}")
-                    continue
-                
-                # Save file
+                        if response.status_code == 200:
+                            pdf_url = self.extract_pdf_url(response.text, sh_mirror)
+                            if pdf_url:
+                                candidate_urls.append((pdf_url, f'Sci-Hub ({sh_mirror.split("//")[1].rstrip("/")})'))
+                                break  # One working Sci-Hub mirror is enough
+                    except Exception:
+                        continue
+        
+        if not candidate_urls:
+            print(f"{ColorText.RED}✗ Failed{ColorText.ENDC} - PDF link not found from any source")
+            self.results['failed'] += 1
+            self.results['papers'].append({'doi': doi, 'title': title, 'status': 'Failed', 'error': 'PDF link not found'})
+            return False
+        
+        # Phase 3: Try each candidate URL
+        for pdf_url, source in candidate_urls:
+            print(f"{ColorText.CYAN}  Trying {source}: {pdf_url[:80]}...{ColorText.ENDC}")
+            content, error = self._try_download_pdf(pdf_url)
+            
+            if content is not None:
+                # Save the valid PDF
                 if is_url:
                     base_name = urlparse(pdf_url).path.split('/')[-1]
                     if not base_name.endswith('.pdf'):
@@ -302,65 +404,29 @@ class BulkDownloader:
                     filename = re.sub(r'[^\w\-_\.]', '_', doi) + '.pdf'
                 
                 filepath = os.path.join(self.output_dir, filename)
-                
-                bytes_downloaded = 0
                 with open(filepath, 'wb') as f:
-                    for chunk in pdf_response.iter_content(chunk_size=8192):
-                        if chunk:
-                            f.write(chunk)
-                            bytes_downloaded += len(chunk)
+                    f.write(content)
                 
-                # Validate PDF
-                file_size = os.path.getsize(filepath)
-                if file_size < 1000:
-                    if os.path.exists(filepath):
-                        os.remove(filepath)
-                    if attempt == self.max_retries - 1:
-                        raise Exception("File too small (< 1KB)")
-                    continue
-                
-                is_valid_pdf = False
-                with open(filepath, 'rb') as f:
-                    if f.read(4) == b'%PDF':
-                        is_valid_pdf = True
-                
-                if not is_valid_pdf:
-                    if os.path.exists(filepath):
-                        os.remove(filepath)
-                    if attempt == self.max_retries - 1:
-                        raise Exception("Invalid PDF file")
-                    continue
-                
-                print(f"{ColorText.GREEN}✓ Success{ColorText.ENDC} - {file_size / 1024:.2f} KB")
+                file_size = len(content)
+                print(f"{ColorText.GREEN}✓ Success via {source}{ColorText.ENDC} - {file_size / 1024:.2f} KB")
                 
                 self.results['success'] += 1
                 self.results['papers'].append({
-                    'doi': doi,
-                    'title': title,
-                    'status': 'Success',
-                    'file_path': filepath,
-                    'size': file_size
+                    'doi': doi, 'title': title, 'status': 'Success',
+                    'file_path': filepath, 'size': file_size
                 })
                 
                 if self.delay > 0:
                     time.sleep(self.delay)
-                
                 return True
-                
-            except Exception as e:
-                if attempt == self.max_retries - 1:
-                    print(f"{ColorText.RED}✗ Failed{ColorText.ENDC} - {str(e)}")
-                    
-                    self.results['failed'] += 1
-                    self.results['papers'].append({
-                        'doi': doi,
-                        'title': title,
-                        'status': 'Failed',
-                        'error': str(e)
-                    })
-                    
-                    return False
+            else:
+                print(f"{ColorText.YELLOW}  ✗ {source} failed: {error}{ColorText.ENDC}")
+                last_error = error
         
+        # All candidates exhausted
+        print(f"{ColorText.RED}✗ Failed{ColorText.ENDC} - {last_error}")
+        self.results['failed'] += 1
+        self.results['papers'].append({'doi': doi, 'title': title, 'status': 'Failed', 'error': last_error})
         return False
     
     def download_batch(self, dois: List[str], titles: List[str] = None) -> dict:
@@ -434,7 +500,7 @@ Examples:
     parser.add_argument('-f', '--file', help='Input file (CSV, TXT, DOCX or PDF with DOIs)')
     parser.add_argument('-i', '--interactive', action='store_true', help='Interactive mode (paste DOIs)')
     parser.add_argument('-o', '--output', default='./downloads', help='Output directory')
-    parser.add_argument('-m', '--mirror', default=SCIHUB_URL, help='Sci-Hub mirror URL')
+    parser.add_argument('-m', '--mirror', default=SCIHUB_URL, help='Primary Sci-Hub mirror URL (all mirrors are tried automatically as fallback)')
     parser.add_argument('-d', '--delay', type=float, default=0, help='Delay between downloads (seconds)')
     parser.add_argument('-r', '--retries', type=int, default=3, help='Max retries per paper')
     parser.add_argument('-e', '--export', help='Export results to CSV/JSON')
